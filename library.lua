@@ -1,5152 +1,2868 @@
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local Lighting = game:GetService("Lighting")
-local TweenService = game:GetService("TweenService")
+-- source: https://v3rmillion.net/showthread.php?tid=1164653
 
-local CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-local function RandomName(len)
-	len = len or 12
-	local t = {}
-	for i = 1, len do
-		local idx = math.random(1, #CHARS)
-		t[i] = string.sub(CHARS, idx, idx)
-	end
-	return table.concat(t)
-end
-local RunService = game:GetService("RunService")
-local GuiService = game:GetService("GuiService")
+--LIBRARY START
+	--Services
+	getgenv().runService = game:GetService"RunService"
+	getgenv().textService = game:GetService"TextService"
+	getgenv().inputService = game:GetService"UserInputService"
+	getgenv().tweenService = game:GetService"TweenService"
 
-local function GetPlayerGui()
-	local player = Players.LocalPlayer
-	if not player then
-		Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
-		player = Players.LocalPlayer
-	end
-	if not player then return nil end
-	return player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 10)
-end
-
-local function ParentGui(gui)
-	local ok = pcall(function()
-		if gethui then
-			gui.Parent = gethui()
-		elseif syn and syn.protect_gui then
-			syn.protect_gui(gui)
-			gui.Parent = game:GetService("CoreGui")
-		else
-			gui.Parent = game:GetService("CoreGui")
-		end
-	end)
-	if ok and gui.Parent then return end
-	local playerGui = GetPlayerGui()
-	if playerGui then
-		gui.Parent = playerGui
-	else
-		gui.Parent = game:GetService("CoreGui")
-	end
-end
-
-local Theme = {
-	Window        = Color3.fromRGB(26, 26, 28),
-	WindowAlpha   = 0.012,
-	WindowBorder  = Color3.fromRGB(52, 52, 56),
-	TopBar        = Color3.fromRGB(31, 31, 34),
-	Section       = Color3.fromRGB(29, 29, 32),
-	SectionBorder = Color3.fromRGB(46, 46, 50),
-	Group         = Color3.fromRGB(34, 34, 37),
-	GroupBorder   = Color3.fromRGB(54, 54, 58),
-	Field         = Color3.fromRGB(40, 40, 44),
-	FieldHover    = Color3.fromRGB(48, 48, 52),
-	Border        = Color3.fromRGB(60, 60, 65),
-	BorderSoft    = Color3.fromRGB(45, 45, 49),
-	PopupBg       = Color3.fromRGB(38, 38, 42),
-	PopupBorder   = Color3.fromRGB(62, 62, 67),
-	Track         = Color3.fromRGB(58, 58, 62),
-	Text          = Color3.fromRGB(174, 174, 178),
-	TextDim       = Color3.fromRGB(108, 108, 113),
-	TextBright    = Color3.fromRGB(228, 228, 232),
-	TextMarked    = Color3.fromRGB(198, 198, 122),
-	TextCode      = Color3.fromRGB(96, 200, 96),
-	Danger        = Color3.fromRGB(226, 102, 102),
-	Accent        = Color3.fromRGB(232, 161, 168),
-	AccentSoft    = Color3.fromRGB(240, 186, 191),
-	AccentDim     = Color3.fromRGB(146, 98, 103),
-	Font          = Enum.Font.Gotham,
-	FontMedium    = Enum.Font.GothamMedium,
-	TextSize      = 13,
-	Radius        = 6,
-	GearIcon      = "rbxassetid://6031280882",
-}
-
-local function AccentHex()
-	return string.format("#%02X%02X%02X",
-		math.floor(Theme.Accent.R * 255 + 0.5),
-		math.floor(Theme.Accent.G * 255 + 0.5),
-		math.floor(Theme.Accent.B * 255 + 0.5))
-end
-
-local MAX_DISPLAY_ORDER = 2^53
-
-local EASE      = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local EASE_FAST = TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
--- Registry of themed instances, keyed by instance.
--- Each entry maps a property name to a theme key, so a repaint is a plain
--- lookup instead of a colour comparison. Declaring a tag is explicit:
---   New("Frame", { ThemeTag = { BackgroundColor3 = "Section" } })
--- and a state change reassigns the tag instead of writing a raw colour:
---   Library:Tag(box, { BackgroundColor3 = state and "Accent" or "Field" })
-local Painted = {}
-local PaintedCount = 0
-local ThemeAlpha = {}
-local ALPHA_PROPS = {
-	BackgroundColor3 = "BackgroundTransparency",
-	ImageColor3 = "ImageTransparency",
-	TextColor3 = "TextTransparency",
-	Color = "Transparency",
-}
-local ThemeIndex = {}
-local THEME_ORDER = {
-	"Window", "WindowBorder", "TopBar", "Section", "SectionBorder",
-	"Group", "GroupBorder", "Field", "FieldHover", "Border", "BorderSoft",
-	"PopupBg", "PopupBorder", "Track", "Text", "TextDim", "TextBright",
-	"TextMarked", "TextCode", "Danger", "Accent", "AccentSoft", "AccentDim",
-}
-
-local function IndexTheme()
-	table.clear(ThemeIndex)
-	for _, key in ipairs(THEME_ORDER) do
-		local value = Theme[key]
-		if typeof(value) == "Color3" and ThemeIndex[tostring(value)] == nil then
-			ThemeIndex[tostring(value)] = key
-		end
-	end
-end
-IndexTheme()
-
-local function TagInstance(inst, props)
-	local entry = Painted[inst]
-	if not entry then
-		entry = {}
-		Painted[inst] = entry
-		PaintedCount = PaintedCount + 1
-	end
-	for property, key in pairs(props) do
-		if key == false then
-			entry[property] = nil
-		else
-			entry[property] = key
-			local color = Theme[key]
-			if color ~= nil then
-				pcall(function() inst[property] = color end)
-			end
-		end
-	end
-	return inst
-end
-
-local Library = {}
-Library.Theme = Theme
-Library.Flags = {}
-Library.Windows = {}
-Library.Connections = {}
-Library.Open = true
-Library.ToggleKey = Enum.KeyCode.RightShift
-Library.ToggleInput = nil
-Library.Binding = false
-Library.Registry = {}
-Library.Defaults = {}
-Library.NotificationsEnabled = true
-Library.NotificationLimit = 5
-Library.Dirty = false
-Library.BaseUrl = "https://raw.githubusercontent.com/FacilityHUB/UI-Facility/refs/heads/main/"
-Library.AddonPaths = {
-	Icons = "addons/Icons.luau",
-	SaveManager = "addons/SaveManager.luau",
-	InterfaceManager = "addons/InterfaceManager.luau",
-	ThemeManager = "addons/ThemeManager.luau",
-}
-Library.Addons = {}
-Library.Painted = Painted
-Library.PaintedCount = function() return PaintedCount end
--- "inline" : titre dans la carte (defaut)
--- "border" : titre pose sur la bordure, facon fieldset
-Library.SectionTitleStyle = "inline"
-Library.RepaintHooks = {}
-
-function Library:SafeCallback(label, callback, ...)
-	if not callback then return end
-	local packed = table.pack(...)
-	task.spawn(function()
-		local ok, err = pcall(callback, table.unpack(packed, 1, packed.n))
-		if ok then return end
-		local message = tostring(err)
-		local _, cut = string.find(message, ":%d+: ")
-		if cut then message = string.sub(message, cut + 1) end
-		warn("Facility | callback error in '" .. tostring(label) .. "': " .. tostring(err))
-		self:Error("callback error", tostring(label) .. " - " .. message, 7)
-	end)
-end
-
-function Library:OnRepaint(callback)
-	table.insert(self.RepaintHooks, callback)
-	return callback
-end
-Library.ThemeAlpha = ThemeAlpha
-Library.Version = "2026.09.10-elements"
-
-function Library:LoadAddon(name)
-	if self.Addons[name] ~= nil then return self.Addons[name] end
-
-	local module
-	local ok, found = pcall(function()
-		local root = script and script.Parent
-		local folder = root and (root:FindFirstChild("addons") or root:FindFirstChild("Addons"))
-		local file = folder and folder:FindFirstChild(name)
-		return file and require(file) or nil
-	end)
-	if ok then module = found end
-
-	if module == nil then
-		local path = self.AddonPaths[name]
-		if not path then
-			warn("Facility | unknown addon '" .. tostring(name) .. "'")
-			return nil
-		end
-		local fetched, source = pcall(function() return game:HttpGet(self.BaseUrl .. path) end)
-		if fetched and type(source) == "string" and #source > 0 then
-			local built, chunk = pcall(loadstring, source)
-			if built and type(chunk) == "function" then
-				local ran, value = pcall(chunk)
-				if ran then module = value end
-			end
-		end
+	if getgenv().library then
+		getgenv().library:Unload()
 	end
 
-	if module == nil then
-		warn("Facility | addon '" .. tostring(name) .. "' unavailable")
-		return nil
-	end
-	if type(module) == "function" then
-		module = module(self)
-	end
-	self.Addons[name] = module
-	return module
-end
+	local library = {design = getgenv().design == "kali" and "kali" or "uwuware", tabs = {}, draggable = true, flags = {}, title = "uwuware", open = false, mousestate = inputService.MouseIconEnabled, popup = nil, instances = {}, connections = {}, options = {}, notifications = {}, tabSize = 0, theme = {}, foldername = "uw_configs", fileext = ".uw"}
+	getgenv().library = library
 
-function Library:SetColor(key, color, alpha)
-	if typeof(color) ~= "Color3" or Theme[key] == nil then return false end
-	Theme[key] = color
-	if alpha ~= nil then
-		ThemeAlpha[key] = math.clamp(alpha, 0, 1)
-	end
-	self:Repaint()
-	return true
-end
+	--Locals
+	local dragging, dragInput, dragStart, startPos, dragObject
 
-function Library:Tag(instance, props)
-	if typeof(instance) ~= "Instance" then return instance end
-	return TagInstance(instance, props)
-end
-
-function Library:Untag(instance)
-	if Painted[instance] then
-		Painted[instance] = nil
-		PaintedCount = PaintedCount - 1
-	end
-end
-
-function Library:Repaint()
-	if PaintedCount == 0 then
-		warn("Facility | repaint registry is empty, main.luau is probably outdated")
-	end
-	IndexTheme()
-
-	local dead = {}
-	for instance, entry in pairs(Painted) do
-		local ok = pcall(function()
-			-- an instance removed from the tree is dropped on the next pass
-			if not instance.Parent and not instance:IsA("ScreenGui") then
-				table.insert(dead, instance)
-				return
-			end
-			for property, key in pairs(entry) do
-				local color = Theme[key]
-				if color ~= nil then
-					instance[property] = color
-					local alpha = tonumber(ThemeAlpha[key])
-					local transparency = ALPHA_PROPS[property]
-					if alpha and alpha < 1 and alpha > 0 and transparency
-						and instance[transparency] < 1 then
-						instance[transparency] = 1 - alpha
-					end
-				end
-			end
-		end)
-		if not ok then table.insert(dead, instance) end
-	end
-
-	for _, instance in ipairs(dead) do
-		Painted[instance] = nil
-		PaintedCount = PaintedCount - 1
-	end
-
-	self:RefreshHotkeys()
-	for i = #self.RepaintHooks, 1, -1 do
-		local ok = pcall(self.RepaintHooks[i])
-		if not ok then table.remove(self.RepaintHooks, i) end
-	end
-end
-
-function Library:Register(flag, entry)
-	if self.Registry[flag] then
-		warn("Facility | duplicate flag '" .. tostring(flag) .. "', the previous element will no longer be saved")
-	end
-	self.Registry[flag] = entry
-	self.Defaults[flag] = entry.Get()
-end
-
-function Library:MarkDirty(flag)
-	if flag and self.DirtyIgnore and self.DirtyIgnore[flag] then return end
-	if self.Dirty then return end
-	self.Dirty = true
-	if self.OnDirty then task.spawn(self.OnDirty, true) end
-end
-
-function Library:ClearDirty()
-	self.Dirty = false
-	if self.OnDirty then task.spawn(self.OnDirty, false) end
-end
-
-function Library:GetConfig(ignore)
-	local data = {}
-	for flag, entry in pairs(self.Registry) do
-		if not (ignore and ignore[flag]) then
-			local ok, value = pcall(entry.Get)
-			if ok then data[flag] = value end
-		end
-	end
-	return data
-end
-
-function Library:LoadConfig(data, ignore)
-	for flag, value in pairs(data or {}) do
-		local entry = self.Registry[flag]
-		if entry and not (ignore and ignore[flag]) then
-			pcall(entry.Set, value)
-		end
-	end
-	self:ClearDirty()
-end
-
-function Library:CaptureDefaults()
-	for flag, entry in pairs(self.Registry) do
-		local ok, value = pcall(entry.Get)
-		if ok then self.Defaults[flag] = value end
-	end
-end
-
-function Library:ResetDefaults(ignore)
-	self:LoadConfig(self.Defaults, ignore)
-end
-
-local function Track(conn)
-	table.insert(Library.Connections, conn)
-	return conn
-end
-
-local function New(class, props, children)
-	local inst = Instance.new(class)
-	local parent = nil
-	local tag = nil
-
-	for k, v in pairs(props or {}) do
-		if k == "Parent" then
-			parent = v
-		elseif k == "ThemeTag" then
-			tag = v
-		else
-			inst[k] = v
-			-- fallback for call sites that pass Theme.X directly
-			if typeof(v) == "Color3" then
-				local key = ThemeIndex[tostring(v)]
-				if key then TagInstance(inst, { [k] = key }) end
-			end
-		end
-	end
-
-	-- an explicit tag always wins over the detected one
-	if tag then TagInstance(inst, tag) end
-
-	for _, child in ipairs(children or {}) do child.Parent = inst end
-	if parent then inst.Parent = parent end
-	return inst
-end
-
-local function Corner(parent, r)
-	return New("UICorner", { CornerRadius = UDim.new(0, r or Theme.Radius), Parent = parent })
-end
-
-local function Stroke(parent, color, thickness, transparency)
-	return New("UIStroke", {
-		Color = color or Theme.Border,
-		Thickness = thickness or 1,
-		Transparency = transparency or 0,
-		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-		Parent = parent,
-	})
-end
-
-local function Pad(parent, t, r, b, l)
-	return New("UIPadding", {
-		PaddingTop = UDim.new(0, t or 0),
-		PaddingRight = UDim.new(0, r or t or 0),
-		PaddingBottom = UDim.new(0, b or t or 0),
-		PaddingLeft = UDim.new(0, l or r or t or 0),
-		Parent = parent,
-	})
-end
-
-local function List(parent, padding, dir, sort)
-	return New("UIListLayout", {
-		FillDirection = dir or Enum.FillDirection.Vertical,
-		Padding = UDim.new(0, padding or 0),
-		SortOrder = sort or Enum.SortOrder.LayoutOrder,
-		Parent = parent,
-	})
-end
-
-local function Label(parent, text, color, size, font)
-	return New("TextLabel", {
-		BackgroundTransparency = 1,
-		Text = text,
-		TextColor3 = color or Theme.Text,
-		TextSize = size or Theme.TextSize,
-		Font = font or Theme.Font,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextYAlignment = Enum.TextYAlignment.Center,
-		RichText = true,
-		Parent = parent,
-	})
-end
-
-local function Tween(inst, goal, info)
-	local t = TweenService:Create(inst, info or EASE, goal)
-	t:Play()
-	return t
-end
-
-local function Chevron(parent, color)
-	local holder = New("Frame", {
-		Name = "Chevron",
-		Size = UDim2.fromOffset(10, 10),
-		BackgroundTransparency = 1,
-		Parent = parent,
-	})
-	for i = 1, 2 do
-		local bar = New("Frame", {
-			Size = UDim2.fromOffset(7, 2),
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.new(0.5, i == 1 and -2 or 2, 0.5, 0),
-			Rotation = i == 1 and 45 or -45,
-			BackgroundColor3 = color or Theme.TextDim,
-			BorderSizePixel = 0,
-			Parent = holder,
-		})
-		Corner(bar, 1)
-	end
-	return holder
-end
-
-local function KeyName(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then return "MB1" end
-	if input.UserInputType == Enum.UserInputType.MouseButton2 then return "MB2" end
-	if input.UserInputType == Enum.UserInputType.MouseButton3 then return "MB3" end
-	if input.UserInputType == Enum.UserInputType.Keyboard then return input.KeyCode.Name end
-	return nil
-end
-
-local function Hover(button, target, baseKey, hoverKey)
-	Track(button.MouseEnter:Connect(function()
-		Tween(target, { BackgroundColor3 = Theme[hoverKey] }, EASE_FAST)
-	end))
-	Track(button.MouseLeave:Connect(function()
-		Tween(target, { BackgroundColor3 = Theme[baseKey] }, EASE_FAST)
-	end))
-end
-
-local function BindDrag(target, callback)
-	local moveConn, endConn
-	Track(target.InputBegan:Connect(function(input)
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1
-			and input.UserInputType ~= Enum.UserInputType.Touch then return end
-		callback(input.Position)
-		if moveConn then moveConn:Disconnect() end
-		moveConn = UserInputService.InputChanged:Connect(function(move)
-			if move.UserInputType == Enum.UserInputType.MouseMovement
-				or move.UserInputType == Enum.UserInputType.Touch then
-				callback(move.Position)
-			end
-		end)
-		if endConn then endConn:Disconnect() end
-		endConn = UserInputService.InputEnded:Connect(function(ended)
-			if ended.UserInputType == input.UserInputType then
-				if moveConn then moveConn:Disconnect() moveConn = nil end
-				if endConn then endConn:Disconnect() endConn = nil end
-			end
-		end)
-	end))
-end
-
-local function ToHex(color, alpha)
-	return string.format("#%02X%02X%02X%02X",
-		math.floor(color.R * 255 + 0.5),
-		math.floor(color.G * 255 + 0.5),
-		math.floor(color.B * 255 + 0.5),
-		math.floor(math.clamp(alpha or 1, 0, 1) * 255 + 0.5))
-end
-
-local function FromHex(text)
-	if typeof(text) == "Color3" then return text, 1 end
-	if type(text) ~= "string" then return nil end
-	local hex = string.gsub(string.gsub(text, "#", ""), "%s", "")
-	if #hex ~= 6 and #hex ~= 8 then return nil end
-	local r = tonumber(string.sub(hex, 1, 2), 16)
-	local g = tonumber(string.sub(hex, 3, 4), 16)
-	local b = tonumber(string.sub(hex, 5, 6), 16)
-	if not r or not g or not b then return nil end
-	local a = 255
-	if #hex == 8 then a = tonumber(string.sub(hex, 7, 8), 16) or 255 end
-	return Color3.fromRGB(r, g, b), a / 255
-end
-
-local HUE_SEQUENCE = ColorSequence.new({
-	ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
-	ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
-	ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
-	ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0, 255, 255)),
-	ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
-	ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
-	ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0)),
-})
-
-local IconLib, IconTried
-
-function Library:PreloadIcons()
-	if IconTried then return IconLib end
-	IconTried = true
-	local loaded = self:LoadAddon("Icons")
-	if type(loaded) == "table" then IconLib = loaded end
-	return IconLib
-end
-
-local function ResolveIcon(icon)
-	if not icon or icon == 0 or icon == "" then return nil end
-	if type(icon) == "number" then
-		return { Image = "rbxassetid://" .. icon }
-	end
-	if type(icon) ~= "string" then return nil end
-	if string.find(icon, "rbxassetid://") == 1 or string.find(icon, "rbxasset://") == 1 then
-		return { Image = icon }
-	end
-	local lib = Library:PreloadIcons()
-	local set = lib and lib["48px"]
-	local entry = set and set[string.lower(string.match(icon, "^%s*(.-)%s*$"))]
-	if not entry or type(entry[1]) ~= "number" then return nil end
-	return {
-		Image = "rbxassetid://" .. entry[1],
-		RectSize = Vector2.new(entry[2][1], entry[2][2]),
-		RectOffset = Vector2.new(entry[3][1], entry[3][2]),
+	local blacklistedKeys = { --add or remove keys if you find the need to
+		Enum.KeyCode.Unknown,Enum.KeyCode.W,Enum.KeyCode.A,Enum.KeyCode.S,Enum.KeyCode.D,Enum.KeyCode.Slash,Enum.KeyCode.Tab,Enum.KeyCode.Escape
 	}
-end
+	local whitelistedMouseinputs = { --add or remove mouse inputs if you find the need to
+		Enum.UserInputType.MouseButton1,Enum.UserInputType.MouseButton2,Enum.UserInputType.MouseButton3
+	}
 
-local function StyleColor(style, fallback)
-	if typeof(style) == "Color3" then return style end
-	if type(style) ~= "string" then return fallback end
-	style = string.lower(style)
-	if style == "normal" or style == "text" then return Theme.Text end
-	if style == "dim" or style == "muted" then return Theme.TextDim end
-	if style == "bright" or style == "title" then return Theme.TextBright end
-	if style == "warning" or style == "warn" or style == "yellow" then return Theme.TextMarked end
-	if style == "danger" or style == "error" or style == "red" then return Theme.Danger end
-	if style == "success" or style == "green" then return Theme.TextCode end
-	if style == "accent" or style == "pink" then return Theme.Accent end
-	return fallback
-end
-
-local function Disableable(api, parts, opts)
-	api.Enabled = true
-
-	function api:SetEnabled(state)
-		state = state ~= false
-		self.Enabled = state
-		for _, inst in ipairs(parts) do
-			pcall(function()
-				if inst:IsA("UIStroke") then
-					inst.Transparency = state and 0 or 0.7
-				elseif inst:IsA("ImageLabel") or inst:IsA("ImageButton") then
-					inst.ImageTransparency = state and 0 or 0.6
-				else
-					inst.TextTransparency = state and 0 or 0.6
-					if inst:IsA("TextBox") then inst.TextEditable = state end
-				end
-			end)
+	--Functions
+	library.round = function(num, bracket)
+		if typeof(num) == "Vector2" then
+			return Vector2.new(library.round(num.X), library.round(num.Y))
+		elseif typeof(num) == "Vector3" then
+			return Vector3.new(library.round(num.X), library.round(num.Y), library.round(num.Z))
+		elseif typeof(num) == "Color3" then
+			return library.round(num.r * 255), library.round(num.g * 255), library.round(num.b * 255)
+		else
+			return num - num % (bracket or 1);
 		end
-		return self
 	end
 
-	function api:SetDisabled(state)
-		return self:SetEnabled(not state)
+	--From: https://devforum.roblox.com/t/how-to-create-a-simple-rainbow-effect-using-tweenService/221849/2
+	local chromaColor
+	spawn(function()
+		while library and wait() do
+			chromaColor = Color3.fromHSV(tick() % 6 / 6, 1, 1)
+		end
+	end)
+
+	function library:Create(class, properties)
+		properties = properties or {}
+		if not class then return end
+		local a = class == "Square" or class == "Line" or class == "Text" or class == "Quad" or class == "Circle" or class == "Triangle"
+		local t = a and Drawing or Instance
+		local inst = t.new(class)
+		for property, value in next, properties do
+			inst[property] = value
+		end
+		table.insert(self.instances, {object = inst, method = a})
+		return inst
 	end
 
-	if opts and opts.Disabled then api:SetEnabled(false) end
-	return api
-end
-
-local function LabelColor(opts, fallback)
-	if typeof(opts.Color) == "Color3" then return opts.Color, true end
-	local styled = StyleColor(opts.Style, nil)
-	if styled then return styled, true end
-	return fallback, false
-end
-
-local function FlagOf(opts)
-	local flag = opts.Flag
-	if flag == nil then flag = opts.Text end
-	if flag == false then return nil end
-	return flag
-end
-
-local BuildColorPicker, ColorSwatch
-
-local Elements = {}
-Elements.__index = Elements
-
-local function NewContainer(window, frame, float)
-	return setmetatable({ Window = window, Container = frame, Float = float }, Elements)
-end
-
-function Elements:Image(opts)
-	opts = opts or {}
-
-	local height = opts.Height or 120
-	local holder = New("Frame", {
-		Size = UDim2.new(1, 0, 0, height),
-		BackgroundColor3 = Theme.Field,
-		BorderSizePixel = 0,
-		ClipsDescendants = true,
-		Parent = self.Container,
-		ThemeTag = { BackgroundColor3 = "Field" },
-	})
-	Corner(holder, opts.Corner or 6)
-	if opts.Border ~= false then Stroke(holder, Theme.Border) end
-
-	local image = New("ImageLabel", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Image = opts.Image or "",
-		ScaleType = opts.ScaleType or Enum.ScaleType.Crop,
-		Parent = holder,
-	})
-
-	local api = { Instance = holder, Image = image }
-
-	function api:Set(asset)
-		image.Image = tostring(asset or "")
-		return self
+	function library:AddConnection(connection, name, callback)
+		callback = type(name) == "function" and name or callback
+		connection = connection:connect(callback)
+		if name ~= callback then
+			self.connections[name] = connection
+		else
+			table.insert(self.connections, connection)
+		end
+		return connection
 	end
 
-	-- a user id loads that player's headshot
-	function api:SetUser(userId, thumbType, size)
-		task.spawn(function()
-			local ok, content = pcall(function()
-				return Players:GetUserThumbnailAsync(
-					tonumber(userId) or 0,
-					thumbType or Enum.ThumbnailType.HeadShot,
-					size or Enum.ThumbnailSize.Size150x150)
-			end)
-			if ok and content then image.Image = content end
-		end)
-		return self
-	end
-
-	function api:SetHeight(value)
-		holder.Size = UDim2.new(1, 0, 0, value)
-		return self
-	end
-
-	if opts.UserId then api:SetUser(opts.UserId) end
-	return api
-end
-
-function Elements:Table(opts)
-	opts = opts or {}
-
-	local columns = opts.Columns or { "column" }
-	local count = math.max(#columns, 1)
-	local maxRows = opts.MaxRows or 12
-	local rowHeight = opts.RowHeight or 18
-
-	local block = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = self.Container,
-	})
-	List(block, 4)
-
-	local function buildRow(parent, order)
-		local row = New("Frame", {
-			Size = UDim2.new(1, 0, 0, rowHeight),
-			BackgroundTransparency = 1,
-			LayoutOrder = order,
-			Parent = parent,
-		})
-		local cells = {}
-		for index = 1, count do
-			local cell = Label(row, "", Theme.Text, Theme.TextSize - 1)
-			cell.Position = UDim2.fromScale((index - 1) / count, 0)
-			cell.Size = UDim2.new(1 / count, -6, 1, 0)
-			cell.TextTruncate = Enum.TextTruncate.AtEnd
-			if index > 1 and opts.AlignRight then
-				cell.TextXAlignment = Enum.TextXAlignment.Right
+	function library:Unload()
+		inputService.MouseIconEnabled = self.mousestate
+		for _, c in next, self.connections do
+			c:Disconnect()
+		end
+		for _, i in next, self.instances do
+			if i.method then
+				pcall(function() i.object:Remove() end)
+			else
+				i.object:Destroy()
 			end
-			cells[index] = cell
 		end
-		return row, cells
-	end
-
-	-- header
-	local headerCells
-	if opts.Header ~= false then
-		local header
-		header, headerCells = buildRow(block, 1)
-		for index, cell in ipairs(headerCells) do
-			cell.Text = tostring(columns[index] or "")
-			cell.TextColor3 = Theme.TextDim
-			TagInstance(cell, { TextColor3 = "TextDim" })
+		for _, o in next, self.options do
+			if o.type == "toggle" then
+				coroutine.resume(coroutine.create(o.SetState, o))
+			end
 		end
-
-		New("Frame", {
-			Size = UDim2.new(1, 0, 0, 1),
-			BackgroundColor3 = Theme.BorderSoft,
-			BorderSizePixel = 0,
-			LayoutOrder = 2,
-			Parent = block,
-			ThemeTag = { BackgroundColor3 = "BorderSoft" },
-		})
+		library = nil
+		getgenv().library = nil
 	end
 
-	local body = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		LayoutOrder = 3,
-		Parent = block,
-	})
-	List(body, 2)
-
-	local empty = Label(block, opts.EmptyText or "no data", Theme.TextDim, Theme.TextSize - 1)
-	empty.Size = UDim2.new(1, 0, 0, rowHeight)
-	empty.LayoutOrder = 4
-
-	local rows = {}
-	for index = 1, maxRows do
-		local row, cells = buildRow(body, index)
-		row.Visible = false
-		rows[index] = { Frame = row, Cells = cells }
-	end
-
-	local api = { Instance = block, Rows = rows }
-
-	function api:SetRows(data)
-		data = data or {}
-		local shown = 0
-
-		for index, row in ipairs(rows) do
-			local entry = data[index]
-			if entry then
-				shown = shown + 1
-				row.Frame.Visible = true
-				for cellIndex, cell in ipairs(row.Cells) do
-					local value = entry[cellIndex]
-					cell.Text = value ~= nil and tostring(value) or ""
-					local color = entry.Color or (entry.Colors and entry.Colors[cellIndex])
-					if typeof(color) == "Color3" then
-						cell.TextColor3 = color
-					elseif entry.Style then
-						cell.TextColor3 = StyleColor(entry.Style, Theme.Text)
+	function library:LoadConfig(config)
+		if table.find(self:GetConfigs(), config) then
+			local Read, Config = pcall(function() return game:GetService"HttpService":JSONDecode(readfile(self.foldername .. "/" .. config .. self.fileext)) end)
+			Config = Read and Config or {}
+			for _, option in next, self.options do
+				if option.hasInit then
+					if option.type ~= "button" and option.flag and not option.skipflag then
+						if option.type == "toggle" then
+							spawn(function() option:SetState(Config[option.flag] == 1) end)
+						elseif option.type == "color" then
+							if Config[option.flag] then
+								spawn(function() option:SetColor(Config[option.flag]) end)
+								if option.trans then
+									spawn(function() option:SetTrans(Config[option.flag .. " Transparency"]) end)
+								end
+							end
+						elseif option.type == "bind" then
+							spawn(function() option:SetKey(Config[option.flag]) end)
+						else
+							spawn(function() option:SetValue(Config[option.flag]) end)
+						end
 					end
 				end
-			else
-				row.Frame.Visible = false
 			end
 		end
+	end
 
-		empty.Visible = shown == 0
-		if headerCells then
-			for _, cell in ipairs(headerCells) do
-				cell.Visible = shown > 0 or opts.KeepHeader == true
+	function library:SaveConfig(config)
+		local Config = {}
+		if table.find(self:GetConfigs(), config) then
+			Config = game:GetService"HttpService":JSONDecode(readfile(self.foldername .. "/" .. config .. self.fileext))
+		end
+		for _, option in next, self.options do
+			if option.type ~= "button" and option.flag and not option.skipflag then
+				if option.type == "toggle" then
+					Config[option.flag] = option.state and 1 or 0
+				elseif option.type == "color" then
+					Config[option.flag] = {option.color.r, option.color.g, option.color.b}
+					if option.trans then
+						Config[option.flag .. " Transparency"] = option.trans
+					end
+				elseif option.type == "bind" then
+					if option.key ~= "none" then
+						Config[option.flag] = option.key
+					end
+				elseif option.type == "list" then
+					Config[option.flag] = option.value
+				else
+					Config[option.flag] = option.value
+				end
 			end
 		end
-		return shown
+		writefile(self.foldername .. "/" .. config .. self.fileext, game:GetService"HttpService":JSONEncode(Config))
 	end
 
-	function api:Clear()
-		return self:SetRows({})
-	end
-
-	api:SetRows(opts.Rows)
-	return api
-end
-
-function Elements:Divider()
-	local d = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 1),
-		BackgroundColor3 = Theme.BorderSoft,
-		BorderSizePixel = 0,
-		Parent = self.Container,
-		ThemeTag = { BackgroundColor3 = "BorderSoft" },
-	})
-	return d
-end
-
-local function AttachIcon(parent, icon, color, size)
-	local resolved = ResolveIcon(icon)
-	if not resolved then return nil end
-	local image = New("ImageLabel", {
-		Size = UDim2.fromOffset(size, size),
-		Position = UDim2.fromOffset(0, 1),
-		BackgroundTransparency = 1,
-		Image = resolved.Image,
-		ImageColor3 = color,
-		Parent = parent,
-	})
-	if resolved.RectOffset then image.ImageRectOffset = resolved.RectOffset end
-	if resolved.RectSize then image.ImageRectSize = resolved.RectSize end
-	return image
-end
-
-function Elements:Label(text, opts)
-	if typeof(opts) == "Color3" then opts = { Color = opts } end
-	opts = opts or {}
-	local color = opts.Color or StyleColor(opts.Style, Theme.TextDim)
-
-	local row = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = self.Container,
-	})
-
-	local icon = AttachIcon(row, opts.Icon, color, 14)
-	local inset = icon and 20 or 0
-
-	local l = Label(row, tostring(text or ""), color, opts.TextSize, opts.Font)
-	l.Position = UDim2.fromOffset(inset, 0)
-	l.Size = UDim2.new(1, -inset, 0, 0)
-	l.AutomaticSize = Enum.AutomaticSize.Y
-	l.TextWrapped = true
-	l.TextYAlignment = Enum.TextYAlignment.Top
-
-	local api = { Instance = row, Text = l, Icon = icon }
-
-	local function syncVisibility()
-		if opts.KeepSpace then return end
-		row.Visible = l.Text ~= ""
-	end
-
-	function api:Set(value)
-		l.Text = tostring(value or "")
-		syncVisibility()
-	end
-	function api:SetColor(c)
-		l.TextColor3 = c
-		if icon then icon.ImageColor3 = c end
-	end
-	function api:SetStyle(style)
-		api:SetColor(StyleColor(style, Theme.TextDim))
-	end
-
-	syncVisibility()
-	return api
-end
-
-function Elements:Paragraph(opts)
-	opts = opts or {}
-	local accent = StyleColor(opts.Style, Theme.TextBright)
-	local styled = type(opts.Style) == "string" and string.lower(opts.Style) ~= "normal"
-
-	local card = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = Theme.Group,
-		BorderSizePixel = 0,
-		Parent = self.Container,
-		ThemeTag = { BackgroundColor3 = "Group" },
-	})
-	Corner(card, 5)
-	local stroke = Stroke(card, styled and accent or Theme.GroupBorder, 1, styled and 0.55 or 0)
-	Pad(card, 9, 11)
-
-	local inner = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = card,
-	})
-	List(inner, 4)
-
-	local head = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = inner,
-	})
-	local icon = AttachIcon(head, opts.Icon, accent, 15)
-	local inset = icon and 21 or 0
-	local title = Label(head, opts.Title or "", accent, Theme.TextSize, Theme.FontMedium)
-	title.Position = UDim2.fromOffset(inset, 0)
-	title.Size = UDim2.new(1, -inset, 0, 0)
-	title.AutomaticSize = Enum.AutomaticSize.Y
-	title.TextWrapped = true
-	title.TextYAlignment = Enum.TextYAlignment.Top
-
-	local body
-	if opts.Content then
-		body = Label(inner, opts.Content, opts.ContentColor or Theme.TextDim, opts.TextSize or 12)
-		body.Size = UDim2.new(1, 0, 0, 0)
-		body.AutomaticSize = Enum.AutomaticSize.Y
-		body.TextWrapped = true
-		body.TextYAlignment = Enum.TextYAlignment.Top
-		body.LayoutOrder = 2
-	end
-
-	local api = { Instance = card, Title = title, Body = body, Icon = icon }
-	function api:Set(newOpts)
-		newOpts = newOpts or {}
-		if newOpts.Title then title.Text = newOpts.Title end
-		if newOpts.Content and body then body.Text = newOpts.Content end
-		if newOpts.Style then
-			local c = StyleColor(newOpts.Style, Theme.TextBright)
-			title.TextColor3 = c
-			if icon then icon.ImageColor3 = c end
-			stroke.Color = c
+	function library:GetConfigs()
+		if not isfolder(self.foldername) then
+			makefolder(self.foldername)
+			return {}
 		end
+		local files = {}
+		local a = 0
+		for i,v in next, listfiles(self.foldername) do
+			if v:sub(#v - #self.fileext + 1, #v) == self.fileext then
+				a = a + 1
+				v = v:gsub(self.foldername .. "\\", "")
+				v = v:gsub(self.fileext, "")
+				table.insert(files, a, v)
+			end
+		end
+		return files
 	end
-	return api
-end
 
-local function MakeButton(parent, opts, size, order)
-	local state = { Enabled = true }
-	local btn = New("TextButton", {
-		Size = size or UDim2.new(1, 0, 0, 26),
-		BackgroundColor3 = Theme.Field,
-		AutoButtonColor = false,
-		Text = "",
-		BorderSizePixel = 0,
-		LayoutOrder = order,
-		Parent = parent,
-		ThemeTag = { BackgroundColor3 = "Field" },
-	})
-	Corner(btn, 5)
-	Stroke(btn, Theme.Border)
-	local text = Label(btn, opts.Text or "button", (LabelColor(opts, Theme.TextBright)))
-	text.Size = UDim2.fromScale(1, 1)
-	text.TextXAlignment = Enum.TextXAlignment.Center
-	text.TextTruncate = Enum.TextTruncate.AtEnd
-	Hover(btn, btn, "Field", "FieldHover")
-	Track(btn.Activated:Connect(function()
-		if state.Enabled == false then return end
-		Library:SafeCallback(opts.Text or "button", opts.Callback)
-	end))
-	return btn, state, text
-end
-
-function Elements:Button(opts)
-	opts = opts or {}
-	local btn, state, text = MakeButton(self.Container, opts)
-	local api = Disableable({ Instance = btn }, { text })
-	local baseSetEnabled = api.SetEnabled
-	function api:SetEnabled(value)
-		state.Enabled = value ~= false
-		return baseSetEnabled(self, value)
-	end
-	if opts.Disabled then api:SetEnabled(false) end
-	return api
-end
-
-function Elements:ButtonRow(list)
-	local row = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 26),
-		BackgroundTransparency = 1,
-		Parent = self.Container,
-	})
-	List(row, 8, Enum.FillDirection.Horizontal)
-	local n = math.max(#list, 1)
-	local buttons = {}
-	for i, opts in ipairs(list) do
-		buttons[i] = MakeButton(row, opts, UDim2.new(1 / n, -(8 * (n - 1)) / n, 1, 0), i)
-	end
-	return { Instance = row, Buttons = buttons }
-end
-
-function Elements:Split(builders)
-	local row = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = self.Container,
-	})
-	local list = List(row, 12, Enum.FillDirection.Horizontal)
-	list.SortOrder = Enum.SortOrder.LayoutOrder
-
-	local count = math.max(#builders, 1)
-	local columns = {}
-	for i = 1, count do
-		local frame = New("Frame", {
-			Size = UDim2.new(1 / count, -(12 * (count - 1)) / count, 0, 0),
-			AutomaticSize = Enum.AutomaticSize.Y,
+	library.createLabel = function(option, parent)
+		option.main = library:Create("TextLabel", {
+			LayoutOrder = option.position,
+			Position = UDim2.new(0, 6, 0, 0),
+			Size = UDim2.new(1, -12, 0, 24),
 			BackgroundTransparency = 1,
-			LayoutOrder = i,
-			Parent = row,
-		})
-		List(frame, 9)
-		columns[i] = NewContainer(self.Window, frame, self.Float)
-		if type(builders[i]) == "function" then builders[i](columns[i]) end
-	end
-
-	return { Instance = row, Columns = columns }
-end
-
-function Elements:Input(opts)
-	opts = opts or {}
-	local flag = FlagOf(opts)
-	local block = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = self.Container,
-	})
-	List(block, 5)
-	if opts.Text then
-		local cap = Label(block, opts.Text, (LabelColor(opts, Theme.Text)))
-		cap.Size = UDim2.new(1, 0, 0, 15)
-	end
-	local field = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 26),
-		BackgroundColor3 = Theme.Field,
-		BorderSizePixel = 0,
-		ClipsDescendants = true,
-		LayoutOrder = 2,
-		Parent = block,
-		ThemeTag = { BackgroundColor3 = "Field" },
-	})
-	Corner(field, 5)
-	local fStroke = Stroke(field, Theme.Border)
-	local box = New("TextBox", {
-		Size = UDim2.new(1, -20, 1, 0),
-		Position = UDim2.fromOffset(10, 0),
-		BackgroundTransparency = 1,
-		Text = opts.Default or "",
-		PlaceholderText = opts.Placeholder or "",
-		PlaceholderColor3 = Theme.TextDim,
-		TextColor3 = Theme.TextBright,
-		TextSize = Theme.TextSize,
-		Font = Theme.Font,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ClearTextOnFocus = false,
-		Parent = field,
-		ThemeTag = { PlaceholderColor3 = "TextDim", TextColor3 = "TextBright" },
-	})
-
-	local api = Disableable({ Instance = block, Box = box }, { box }, opts)
-	function api:Get() return box.Text end
-	function api:Set(value, silent)
-		box.Text = tostring(value or "")
-		if flag then Library.Flags[flag] = box.Text end
-		if not silent then Library:SafeCallback(opts.Text or "input", opts.Callback, box.Text) end
-	end
-
-	Track(box.Focused:Connect(function()
-		Tween(fStroke, { Color = Theme.Accent }, EASE_FAST)
-	end))
-	Track(box.FocusLost:Connect(function(enter)
-		Tween(fStroke, { Color = Theme.Border }, EASE_FAST)
-		if flag then
-			Library.Flags[flag] = box.Text
-			Library:MarkDirty(flag)
-		end
-		Library:SafeCallback(opts.Text or "input", opts.Callback, box.Text, enter)
-	end))
-
-	if flag then
-		Library.Flags[flag] = box.Text
-		Library:Register(flag, {
-			Type = "Input",
-			Get = function() return box.Text end,
-			Set = function(v) api:Set(v) end,
-		})
-	end
-	return api
-end
-
-local function MakeHint(owner, parent, text, order)
-	local mark = Label(parent, "?", Theme.TextDim, 12)
-	mark.Size = UDim2.fromOffset(10, 18)
-	mark.TextXAlignment = Enum.TextXAlignment.Center
-	mark.LayoutOrder = order or 2
-	mark.Name = "Hint"
-
-	local window = owner and owner.Window
-	local tip
-
-	local function hide()
-		if tip then tip:Destroy() tip = nil end
-	end
-
-	Track(mark.MouseEnter:Connect(function()
-		hide()
-		local layer = window and window.Overlay or mark
-		tip = New("TextLabel", {
-			BackgroundColor3 = Theme.PopupBg,
-			Text = text,
-			TextColor3 = Theme.TextBright,
-			TextSize = 12,
-			Font = Theme.Font,
-			TextWrapped = true,
+			TextSize = 15,
+			Font = Enum.Font.Code,
+			TextColor3 = Color3.new(1, 1, 1),
 			TextXAlignment = Enum.TextXAlignment.Left,
-			AutomaticSize = Enum.AutomaticSize.Y,
-			Size = UDim2.fromOffset(210, 0),
-			AnchorPoint = Vector2.new(0, 1),
-			ZIndex = 340,
-			BorderSizePixel = 0,
-			Parent = layer,
-			ThemeTag = { BackgroundColor3 = "PopupBg", TextColor3 = "TextBright" },
+			TextYAlignment = Enum.TextYAlignment.Top,
+			TextWrapped = true,
+			Parent = parent
 		})
-		Pad(tip, 6, 9)
-		Corner(tip, 4)
-		Stroke(tip, Theme.PopupBorder)
 
-		if window then
-			local scale = math.max(window.Scale.Scale, 0.05)
-			local x = (mark.AbsolutePosition.X - window.Main.AbsolutePosition.X) / scale
-			local y = (mark.AbsolutePosition.Y - window.Main.AbsolutePosition.Y) / scale
-			local width = window.Main.AbsoluteSize.X / scale
-			tip.Position = UDim2.fromOffset(math.clamp(x + 14, 8, math.max(width - 218, 8)), y - 4)
-		else
-			tip.Position = UDim2.new(0, 14, 0, -4)
-		end
-	end))
-	Track(mark.MouseLeave:Connect(hide))
-	return mark
-end
-
-function Elements:Toggle(opts)
-	opts = opts or {}
-	local flag = FlagOf(opts)
-	local state = opts.Default == true
-
-	local row = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 22),
-		BackgroundTransparency = 1,
-		Parent = self.Container,
-	})
-
-	local hit = New("TextButton", {
-		Size = UDim2.new(1, 0, 1, 0),
-		BackgroundTransparency = 1,
-		Text = "",
-		AutoButtonColor = false,
-		Parent = row,
-	})
-
-	local box = New("Frame", {
-		Size = UDim2.fromOffset(13, 13),
-		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 0, 0.5, 0),
-		BackgroundColor3 = Theme.Accent,
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Parent = row,
-		ThemeTag = { BackgroundColor3 = "Accent" },
-	})
-	Corner(box, 3)
-	local boxStroke = Stroke(box, Theme.Border)
-
-	local labelColor, customLabel = LabelColor(opts, Theme.Text)
-	local text = Label(row, opts.Text or "toggle", labelColor)
-	text.Position = UDim2.fromOffset(21, 0)
-	text.Size = UDim2.new(1, -21, 1, 0)
-
-	local left = New("Frame", {
-		Size = UDim2.new(1, -21, 1, 0),
-		Position = UDim2.fromOffset(21, 0),
-		BackgroundTransparency = 1,
-		Parent = row,
-	})
-	local leftList = List(left, 6, Enum.FillDirection.Horizontal)
-	leftList.VerticalAlignment = Enum.VerticalAlignment.Center
-	text.Parent = left
-	text.Size = UDim2.fromOffset(0, 18)
-	text.AutomaticSize = Enum.AutomaticSize.X
-	text.Position = UDim2.fromOffset(0, 0)
-	text.LayoutOrder = 1
-	if opts.Hint then MakeHint(self, left, opts.Hint, 2) end
-
-	local right = New("Frame", {
-		Size = UDim2.new(0, 0, 1, 0),
-		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.fromScale(1, 0),
-		AutomaticSize = Enum.AutomaticSize.X,
-		BackgroundTransparency = 1,
-		Parent = row,
-	})
-	local rightList = List(right, 8, Enum.FillDirection.Horizontal)
-	rightList.VerticalAlignment = Enum.VerticalAlignment.Center
-	rightList.HorizontalAlignment = Enum.HorizontalAlignment.Right
-
-	local owner = self
-	local function syncRow()
-		local s = math.max(owner.Window.Scale.Scale, 0.05)
-		local w = right.AbsoluteSize.X / s
-		left.Size = UDim2.new(1, -(21 + (w > 0 and w + 10 or 0)), 1, 0)
-	end
-	Track(right:GetPropertyChangedSignal("AbsoluteSize"):Connect(syncRow))
-	syncRow()
-
-	local pickerCount = 0
-	local api = { Instance = row, State = state, Pickers = {} }
-
-	local function render(animate)
-		local info = animate and EASE_FAST or TweenInfo.new(0)
-		Tween(box, { BackgroundTransparency = state and 0 or 1 }, info)
-		-- the tag follows the state, so the stroke keeps tracking the theme
-		Library:Tag(boxStroke, { Color = state and "Accent" or "Border" })
-		Tween(boxStroke, { Color = state and Theme.Accent or Theme.Border }, info)
-	end
-
-	function api:Set(value, silent)
-		state = value and true or false
-		api.State = state
-		if flag then
-			Library.Flags[flag] = state
-			Library:MarkDirty(flag)
-		end
-		render(true)
-		Library:RefreshHotkeys()
-		if not silent then Library:SafeCallback(opts.Text or "toggle", opts.Callback, state) end
-	end
-
-	Track(hit.Activated:Connect(function()
-		if api.Enabled == false then return end
-		api:Set(not state)
-	end))
-	Track(hit.MouseEnter:Connect(function()
-		if customLabel then return end
-		Tween(text, { TextColor3 = Theme.TextBright }, EASE_FAST)
-	end))
-	Track(hit.MouseLeave:Connect(function()
-		if customLabel then return end
-		Tween(text, { TextColor3 = Theme.Text }, EASE_FAST)
-	end))
-
-	function api:Keybind(bindOpts)
-		bindOpts = bindOpts or {}
-		local key = bindOpts.Default
-		local pill = New("TextButton", {
-			Size = UDim2.new(0, 0, 0, 20),
-			AutomaticSize = Enum.AutomaticSize.X,
-			BackgroundColor3 = Theme.Field,
-			AutoButtonColor = false,
-			Text = "",
-			BorderSizePixel = 0,
-			LayoutOrder = 20,
-			Parent = right,
-			ThemeTag = { BackgroundColor3 = "Field" },
-		})
-		Corner(pill, 4)
-		Stroke(pill, Theme.Border)
-		local pl = Label(pill, "", Theme.TextDim, 12)
-		pl.Size = UDim2.new(0, 0, 1, 0)
-		pl.AutomaticSize = Enum.AutomaticSize.X
-		Pad(pill, 0, 8)
-
-		local bindFlag = bindOpts.Flag
-		local listening = false
-		local function refresh()
-			if listening then
-				pl.Text = 'key: <font color="' .. AccentHex() .. '">...</font>'
-			elseif key then
-				pl.Text = 'key: <font color="' .. AccentHex() .. '">' .. key .. "</font>"
-			else
-				pl.Text = "key: NONE"
+		setmetatable(option, {__newindex = function(t, i, v)
+			if i == "Text" then
+				option.main.Text = tostring(v)
+				option.main.Size = UDim2.new(1, -12, 0, textService:GetTextSize(option.main.Text, 15, Enum.Font.Code, Vector2.new(option.main.AbsoluteSize.X, 9e9)).Y + 6)
 			end
-			if bindFlag then
-				Library.Flags[bindFlag] = key or ""
-				Library:MarkDirty(bindFlag)
-			end
-			Library:RefreshHotkeys()
-		end
-		refresh()
-
-		Library:RegisterHotkey(function()
-			return {
-				Label = opts.Text or "toggle",
-				Key = key,
-				Active = state,
-				Visible = key ~= nil,
-			}
-		end)
-
-		Library:OnRepaint(refresh)
-
-		if bindFlag then
-			Library:Register(bindFlag, {
-				Type = "Keybind",
-				Get = function() return key or "" end,
-				Set = function(v)
-					key = (v ~= "" and v) or nil
-					listening = false
-					refresh()
-				end,
-			})
-		end
-
-		Track(pill.Activated:Connect(function()
-			listening = true
-			Library.Binding = true
-			refresh()
-			Tween(pill, { BackgroundColor3 = Theme.FieldHover }, EASE_FAST)
-		end))
-		Track(pill.MouseButton2Click:Connect(function()
-			key = nil
-			listening = false
-			Library.Binding = false
-			refresh()
-		end))
-		Track(UserInputService.InputBegan:Connect(function(input, gpe)
-			local name = KeyName(input)
-			if listening then
-				if input.UserInputType == Enum.UserInputType.MouseButton1 then
-					listening = false
-					Library.Binding = false
-					Tween(pill, { BackgroundColor3 = Theme.Field }, EASE_FAST)
-					refresh()
-					return
-				end
-				if input.KeyCode == Enum.KeyCode.Escape then
-					key = nil
-				elseif name then
-					key = name
-				else
-					return
-				end
-				listening = false
-				Library.Binding = false
-				refresh()
-				Tween(pill, { BackgroundColor3 = Theme.Field }, EASE_FAST)
-				return
-			end
-			if gpe or not key or name ~= key then return end
-			if bindOpts.Mode == "hold" then return end
-			api:Set(not state)
-		end))
-		if bindOpts.Mode == "hold" then
-			Track(UserInputService.InputEnded:Connect(function(input)
-				if key and KeyName(input) == key then api:Set(false) end
-			end))
-			Track(UserInputService.InputBegan:Connect(function(input, gpe)
-				if not gpe and key and KeyName(input) == key then api:Set(true) end
-			end))
-		end
-		return api
+		end})
+		option.Text = option.text
 	end
 
-	function api:ColorPicker(pickerOpts)
-		pickerOpts = pickerOpts or {}
-		pickerCount = pickerCount + 1
-		local swatch = ColorSwatch(right, {
-			Size = UDim2.fromOffset(24, 13),
-			BackgroundColor3 = pickerOpts.Default or Color3.fromRGB(255, 255, 255),
-			AutoButtonColor = false,
-			Text = "",
-			BorderSizePixel = 0,
-			LayoutOrder = pickerCount,
-			Parent = right,
-		})
-		local picker = BuildColorPicker(owner, swatch, pickerOpts)
-		api.Pickers[pickerCount] = picker
-		return api
-	end
-
-	function api:Gear(builder)
-		local gear = New("ImageButton", {
-			Size = UDim2.fromOffset(14, 14),
+	library.createDivider = function(option, parent)
+		option.main = library:Create("Frame", {
+			LayoutOrder = option.position,
+			Size = UDim2.new(1, 0, 0, 18),
 			BackgroundTransparency = 1,
-			Image = Theme.GearIcon,
-			ImageColor3 = Theme.TextDim,
-			LayoutOrder = 30,
-			Parent = right,
-			ThemeTag = { ImageColor3 = "TextDim" },
+			Parent = parent
 		})
-		local panel = owner.Window:CreateFloating(190, false, owner.Float)
-		local content = NewContainer(owner.Window, panel.Content, panel)
-		if builder then builder(content) end
-		Track(gear.MouseEnter:Connect(function()
-			Tween(gear, { ImageColor3 = Theme.TextBright }, EASE_FAST)
-		end))
-		Track(gear.MouseLeave:Connect(function()
-			Tween(gear, { ImageColor3 = Theme.TextDim }, EASE_FAST)
-		end))
-		Track(gear.Activated:Connect(function()
-			owner.Window:ToggleFloating(panel, gear)
-		end))
-		return api
-	end
 
-	Disableable(api, { text, boxStroke }, opts)
-
-	if flag then
-		Library.Flags[flag] = state
-		Library:Register(flag, {
-			Type = "Toggle",
-			Get = function() return state end,
-			Set = function(v) api:Set(v == true) end,
+		library:Create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, 0, 0.5, 0),
+			Size = UDim2.new(1, -24, 0, 1),
+			BackgroundColor3 = Color3.fromRGB(60, 60, 60),
+			BorderColor3 = Color3.new(),
+			Parent = option.main
 		})
-	end
-	render(false)
-	if state then Library:SafeCallback(opts.Text or "toggle", opts.Callback, state) end
-	return api
-end
 
-function Elements:Dropdown(opts)
-	opts = opts or {}
-	local flag = FlagOf(opts)
-	local values = opts.Options or {}
-	local multi = opts.Multi == true
-	local selected = multi and (opts.Default or {}) or opts.Default or values[1]
+		option.title = library:Create("TextLabel", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, 0, 0.5, 0),
+			BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+			BorderSizePixel = 0,
+			TextColor3 =  Color3.new(1, 1, 1),
+			TextSize = 15,
+			Font = Enum.Font.Code,
+			TextXAlignment = Enum.TextXAlignment.Center,
+			Parent = option.main
+		})
 
-	local block = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = self.Container,
-	})
-	local blockList = List(block, 5)
-
-	local caption
-	if opts.Text then
-		caption = Label(block, opts.Text, (LabelColor(opts, Theme.Text)))
-		caption.Size = UDim2.new(1, 0, 0, 15)
-	end
-
-	local button = New("TextButton", {
-		Size = UDim2.new(1, 0, 0, 26),
-		BackgroundColor3 = Theme.Field,
-		AutoButtonColor = false,
-		Text = "",
-		BorderSizePixel = 0,
-		LayoutOrder = 2,
-		Parent = block,
-		ThemeTag = { BackgroundColor3 = "Field" },
-	})
-	Corner(button, 5)
-	local bStroke = Stroke(button, Theme.Border)
-	local value = Label(button, "", Theme.TextBright)
-	value.Position = UDim2.fromOffset(10, 0)
-	value.Size = UDim2.new(1, -34, 1, 0)
-	value.TextTruncate = Enum.TextTruncate.AtEnd
-	local chev = Chevron(button, Theme.Text)
-	chev.AnchorPoint = Vector2.new(1, 0.5)
-	chev.Position = UDim2.new(1, -10, 0.5, 0)
-
-	local panel = self.Window:CreateFloating(0, true, self.Float)
-	local searchField = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 24),
-		BackgroundColor3 = Theme.Field,
-		BorderSizePixel = 0,
-		ClipsDescendants = true,
-		LayoutOrder = 1,
-		Visible = false,
-		ZIndex = panel.Frame.ZIndex,
-		Parent = panel.Content,
-		ThemeTag = { BackgroundColor3 = "Field" },
-	})
-	Corner(searchField, 4)
-	Stroke(searchField, Theme.Border)
-	local searchBox = New("TextBox", {
-		Size = UDim2.new(1, -16, 1, 0),
-		Position = UDim2.fromOffset(8, 0),
-		BackgroundTransparency = 1,
-		Text = "",
-		PlaceholderText = "search",
-		PlaceholderColor3 = Theme.TextDim,
-		TextColor3 = Theme.TextBright,
-		TextSize = 12,
-		Font = Theme.Font,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ClearTextOnFocus = false,
-		ZIndex = panel.Frame.ZIndex,
-		Parent = searchField,
-		ThemeTag = { PlaceholderColor3 = "TextDim", TextColor3 = "TextBright" },
-	})
-	local scroller = New("ScrollingFrame", {
-		Size = UDim2.new(1, 0, 0, 24),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		CanvasSize = UDim2.new(),
-		ScrollBarThickness = 2,
-		ScrollBarImageColor3 = Theme.AccentDim,
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		LayoutOrder = 2,
-		ZIndex = panel.Frame.ZIndex,
-		Parent = panel.Content,
-		ThemeTag = { ScrollBarImageColor3 = "AccentDim" },
-	})
-	List(scroller, 2)
-
-	local api = { Instance = block }
-	local rows = {}
-
-	local function display()
-		if multi then
-			if #selected == 0 then return opts.Empty or "none" end
-			return table.concat(selected, ", ")
-		end
-		return tostring(selected or opts.Empty or "none")
-	end
-
-	local function isPicked(v)
-		if multi then
-			for _, x in ipairs(selected) do if x == v then return true end end
-			return false
-		end
-		return selected == v
-	end
-
-	local function refresh()
-		value.Text = display()
-		for v, row in pairs(rows) do
-			local picked = isPicked(v)
-			Library:Tag(row.Text, { TextColor3 = picked and "AccentSoft" or "Text" })
-			Tween(row.Text, { TextColor3 = picked and Theme.AccentSoft or Theme.Text }, EASE_FAST)
-		end
-		if flag then
-			Library.Flags[flag] = selected
-			Library:MarkDirty(flag)
-		end
-	end
-
-	local function applyFilter()
-		local query = searchField.Visible and string.lower(searchBox.Text) or ""
-		local shown = 0
-		for _, v in ipairs(values) do
-			local row = rows[v]
-			if row then
-				local visible = query == ""
-					or string.find(string.lower(tostring(v)), query, 1, true) ~= nil
-				row.Button.Visible = visible
-				if visible then shown = shown + 1 end
-			end
-		end
-		scroller.Size = UDim2.new(1, 0, 0, math.min(math.max(shown, 1) * 26 - 2, opts.MaxHeight or 154))
-	end
-
-	local function build()
-		for _, row in pairs(rows) do row.Button:Destroy() end
-		searchField.Visible = opts.Search == true or (opts.Search ~= false and #values > 8)
-		rows = {}
-		for i, v in ipairs(values) do
-			local item = New("TextButton", {
-				Size = UDim2.new(1, 0, 0, 24),
-				BackgroundColor3 = Theme.FieldHover,
-				BackgroundTransparency = 1,
-				AutoButtonColor = false,
-				Text = "",
-				BorderSizePixel = 0,
-				LayoutOrder = i,
-				ZIndex = panel.Frame.ZIndex,
-				Parent = scroller,
-				ThemeTag = { BackgroundColor3 = "FieldHover" },
-			})
-			Corner(item, 4)
-			local il = Label(item, tostring(v), Theme.Text)
-			il.Position = UDim2.fromOffset(8, 0)
-			il.Size = UDim2.new(1, -16, 1, 0)
-			il.ZIndex = panel.Frame.ZIndex
-			rows[v] = { Button = item, Text = il }
-
-			Track(item.MouseEnter:Connect(function()
-				Tween(item, { BackgroundTransparency = 0.4 }, EASE_FAST)
-			end))
-			Track(item.MouseLeave:Connect(function()
-				Tween(item, { BackgroundTransparency = 1 }, EASE_FAST)
-			end))
-			Track(item.Activated:Connect(function()
-				if multi then
-					local found
-					for idx, x in ipairs(selected) do if x == v then found = idx break end end
-					if found then table.remove(selected, found) else table.insert(selected, v) end
+		setmetatable(option, {__newindex = function(t, i, v)
+			if i == "Text" then
+				if v then
+					option.title.Text = tostring(v)
+					option.title.Size = UDim2.new(0, textService:GetTextSize(option.title.Text, 15, Enum.Font.Code, Vector2.new(9e9, 9e9)).X + 12, 0, 20)
+					option.main.Size = UDim2.new(1, 0, 0, 18)
 				else
-					selected = v
-					self.Window:CloseFloating()
+					option.title.Text = ""
+					option.title.Size = UDim2.new()
+					option.main.Size = UDim2.new(1, 0, 0, 6)
 				end
-				refresh()
-				Library:SafeCallback(opts.Text or "dropdown", opts.Callback, selected)
-			end))
-		end
-		applyFilter()
-	end
-
-	Track(searchBox:GetPropertyChangedSignal("Text"):Connect(applyFilter))
-
-	panel.OnOpen = function()
-		searchBox.Text = ""
-		applyFilter()
-		Library:Tag(bStroke, { Color = "Accent" })
-		Tween(bStroke, { Color = Theme.Accent }, EASE_FAST)
-		Tween(chev, { Rotation = 180 }, EASE_FAST)
-	end
-	panel.OnClose = function()
-		Library:Tag(bStroke, { Color = "Border" })
-		Tween(bStroke, { Color = Theme.Border }, EASE_FAST)
-		Tween(chev, { Rotation = 0 }, EASE_FAST)
-	end
-
-	Track(button.Activated:Connect(function()
-		if api.Enabled == false then return end
-		self.Window:ToggleFloating(panel, button, true)
-	end))
-	Hover(button, button, "Field", "FieldHover")
-
-	function api:Set(v, silent)
-		selected = v
-		refresh()
-		if not silent then Library:SafeCallback(opts.Text or "dropdown", opts.Callback, selected) end
-	end
-
-	function api:Get()
-		return selected
-	end
-
-	function api:SetOptions(newValues)
-		values = newValues or {}
-		build()
-		if not multi and not isPicked(selected) then selected = values[1] end
-		refresh()
-	end
-
-	build()
-	refresh()
-	Disableable(api, { value, caption }, opts)
-
-	Library:OnRepaint(refresh)
-
-	if flag then
-		Library:Register(flag, {
-			Type = multi and "MultiDropdown" or "Dropdown",
-			Get = function()
-				if not multi then return selected end
-				local copy = {}
-				for i, v in ipairs(selected) do copy[i] = v end
-				return copy
-			end,
-			Set = function(v)
-				if multi and type(v) ~= "table" then v = { v } end
-				api:Set(v)
-			end,
-		})
-	end
-	return api
-end
-
-function Elements:Slider(opts)
-	opts = opts or {}
-	local flag = FlagOf(opts)
-	local min = opts.Min or 0
-	local max = opts.Max or 100
-	local decimals = opts.Decimals or 0
-	local value = math.clamp(opts.Default or min, min, max)
-
-	local block = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 30),
-		BackgroundTransparency = 1,
-		Parent = self.Container,
-	})
-
-	local head = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 16),
-		BackgroundTransparency = 1,
-		Parent = block,
-	})
-	local headList = List(head, 8, Enum.FillDirection.Horizontal)
-	headList.VerticalAlignment = Enum.VerticalAlignment.Center
-
-	local name = Label(head, opts.Text or "slider", (LabelColor(opts, Theme.Text)))
-	name.Size = UDim2.fromOffset(0, 16)
-	name.AutomaticSize = Enum.AutomaticSize.X
-
-	local valueBox = New("TextBox", {
-		Size = UDim2.fromOffset(0, 16),
-		AutomaticSize = Enum.AutomaticSize.X,
-		BackgroundTransparency = 1,
-		Text = "",
-		TextColor3 = Theme.TextDim,
-		TextSize = 12,
-		Font = Theme.Font,
-		PlaceholderColor3 = Theme.TextDim,
-		ClearTextOnFocus = true,
-		LayoutOrder = 2,
-		Parent = head,
-		ThemeTag = { TextColor3 = "TextDim", PlaceholderColor3 = "TextDim" },
-	})
-
-	local valueLabel = valueBox
-
-	local track = New("TextButton", {
-		Size = UDim2.new(1, 0, 0, 4),
-		Position = UDim2.new(0, 0, 0, 24),
-		BackgroundColor3 = Theme.Track,
-		AutoButtonColor = false,
-		Text = "",
-		BorderSizePixel = 0,
-		Parent = block,
-		ThemeTag = { BackgroundColor3 = "Track" },
-	})
-	Corner(track, 2)
-	local fill = New("Frame", {
-		Size = UDim2.fromScale(0, 1),
-		BackgroundColor3 = Theme.Accent,
-		BorderSizePixel = 0,
-		Parent = track,
-		ThemeTag = { BackgroundColor3 = "Accent" },
-	})
-	Corner(fill, 2)
-	local knob = New("Frame", {
-		Size = UDim2.fromOffset(9, 9),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0, 0.5),
-		BackgroundColor3 = Theme.Accent,
-		BorderSizePixel = 0,
-		Parent = track,
-		ThemeTag = { BackgroundColor3 = "Accent" },
-	})
-	Corner(knob, 5)
-
-	local hit = New("TextButton", {
-		Size = UDim2.new(1, 0, 0, 15),
-		Position = UDim2.new(0, 0, 0, 16),
-		BackgroundTransparency = 1,
-		AutoButtonColor = false,
-		Text = "",
-		Parent = block,
-	})
-
-	local api = { Instance = block, Value = value }
-
-	local function format(v)
-		if opts.ZeroText and v == min then return opts.ZeroText end
-		local s = decimals > 0 and string.format("%." .. decimals .. "f", v) or tostring(math.floor(v + 0.5))
-		return s .. (opts.Suffix or "")
-	end
-
-	local function render(v, animate)
-		local alpha = (max - min) == 0 and 0 or (v - min) / (max - min)
-		local info = animate and EASE_FAST or TweenInfo.new(0)
-		Tween(fill, { Size = UDim2.fromScale(alpha, 1) }, info)
-		Tween(knob, { Position = UDim2.new(alpha, 0, 0.5, 0) }, info)
-		valueBox.Text = format(v)
-	end
-
-	Track(valueBox.Focused:Connect(function()
-		valueBox.Text = tostring(math.floor(value * 10^decimals + 0.5) / 10^decimals)
-		valueBox.TextColor3 = Theme.TextBright
-	end))
-
-	Track(valueBox.FocusLost:Connect(function(entered)
-		valueBox.TextColor3 = Theme.TextDim
-		if entered then
-			local num = tonumber(valueBox.Text)
-			if num then
-				api:Set(num)
-			else
-				render(value, false)
 			end
+		end})
+		option.Text = option.text
+	end
+
+	library.createToggle = function(option, parent)
+		option.hasInit = true
+
+		option.main = library:Create("Frame", {
+			LayoutOrder = option.position,
+			Size = UDim2.new(1, 0, 0, 20),
+			BackgroundTransparency = 1,
+			Parent = parent
+		})
+
+		local tickbox
+		local tickboxOverlay
+		if option.style then
+			tickbox = library:Create("ImageLabel", {
+				Position = UDim2.new(0, 6, 0, 4),
+				Size = UDim2.new(0, 12, 0, 12),
+				BackgroundTransparency = 1,
+				Image = "rbxassetid://3570695787",
+				ImageColor3 = Color3.new(),
+				Parent = option.main
+			})
+
+			library:Create("ImageLabel", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.new(0.5, 0, 0.5, 0),
+				Size = UDim2.new(1, -2, 1, -2),
+				BackgroundTransparency = 1,
+				Image = "rbxassetid://3570695787",
+				ImageColor3 = Color3.fromRGB(60, 60, 60),
+				Parent = tickbox
+			})
+
+			library:Create("ImageLabel", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.new(0.5, 0, 0.5, 0),
+				Size = UDim2.new(1, -6, 1, -6),
+				BackgroundTransparency = 1,
+				Image = "rbxassetid://3570695787",
+				ImageColor3 = Color3.fromRGB(40, 40, 40),
+				Parent = tickbox
+			})
+
+			tickboxOverlay = library:Create("ImageLabel", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.new(0.5, 0, 0.5, 0),
+				Size = UDim2.new(1, -6, 1, -6),
+				BackgroundTransparency = 1,
+				Image = "rbxassetid://3570695787",
+				ImageColor3 = library.flags["Menu Accent Color"],
+				Visible = option.state,
+				Parent = tickbox
+			})
+
+			library:Create("ImageLabel", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.new(0.5, 0, 0.5, 0),
+				Size = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Image = "rbxassetid://5941353943",
+				ImageTransparency = 0.6,
+				Parent = tickbox
+			})
+
+			table.insert(library.theme, tickboxOverlay)
 		else
-			render(value, false)
+			tickbox = library:Create("Frame", {
+				Position = UDim2.new(0, 6, 0, 4),
+				Size = UDim2.new(0, 12, 0, 12),
+				BackgroundColor3 = library.flags["Menu Accent Color"],
+				BorderColor3 = Color3.new(),
+				Parent = option.main
+			})
+
+			tickboxOverlay = library:Create("ImageLabel", {
+				Size = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = option.state and 1 or 0,
+				BackgroundColor3 = Color3.fromRGB(50, 50, 50),
+				BorderColor3 = Color3.new(),
+				Image = "rbxassetid://4155801252",
+				ImageTransparency = 0.6,
+				ImageColor3 = Color3.new(),
+				Parent = tickbox
+			})
+
+			library:Create("ImageLabel", {
+				Size = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Image = "rbxassetid://2592362371",
+				ImageColor3 = Color3.fromRGB(60, 60, 60),
+				ScaleType = Enum.ScaleType.Slice,
+				SliceCenter = Rect.new(2, 2, 62, 62),
+				Parent = tickbox
+			})
+
+			library:Create("ImageLabel", {
+				Size = UDim2.new(1, -2, 1, -2),
+				Position = UDim2.new(0, 1, 0, 1),
+				BackgroundTransparency = 1,
+				Image = "rbxassetid://2592362371",
+				ImageColor3 = Color3.new(),
+				ScaleType = Enum.ScaleType.Slice,
+				SliceCenter = Rect.new(2, 2, 62, 62),
+				Parent = tickbox
+			})
+
+			table.insert(library.theme, tickbox)
 		end
-	end))
 
-	function api:Set(v, silent)
-		v = math.clamp(v, min, max)
-		if opts.Step then v = min + math.floor((v - min) / opts.Step + 0.5) * opts.Step end
-		if decimals == 0 then v = math.floor(v + 0.5) end
-		value = v
-		api.Value = v
-		if flag then
-			Library.Flags[flag] = v
-			Library:MarkDirty(flag)
-		end
-		render(v, true)
-		if not silent then Library:SafeCallback(opts.Text or "slider", opts.Callback, v) end
-	end
+		option.interest = library:Create("Frame", {
+			Position = UDim2.new(0, 0, 0, 0),
+			Size = UDim2.new(1, 0, 0, 20),
+			BackgroundTransparency = 1,
+			Parent = option.main
+		})
 
-	local dragging, moveConn, endConn
+		option.title = library:Create("TextLabel", {
+			Position = UDim2.new(0, 24, 0, 0),
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Text = option.text,
+			TextColor3 =  option.state and Color3.fromRGB(210, 210, 210) or Color3.fromRGB(180, 180, 180),
+			TextSize = 15,
+			Font = Enum.Font.Code,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Parent = option.interest
+		})
 
-	local function fromX(x)
-		local alpha = math.clamp((x - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
-		api:Set(min + (max - min) * alpha)
-	end
-
-	Track(hit.InputBegan:Connect(function(input)
-		if api.Enabled == false then return end
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1
-			and input.UserInputType ~= Enum.UserInputType.Touch then return end
-		dragging = true
-		Tween(knob, { Size = UDim2.fromOffset(11, 11) }, EASE_FAST)
-		fromX(input.Position.X)
-		moveConn = UserInputService.InputChanged:Connect(function(move)
-			if move.UserInputType == Enum.UserInputType.MouseMovement
-				or move.UserInputType == Enum.UserInputType.Touch then
-				if dragging then fromX(move.Position.X) end
+		option.interest.InputBegan:connect(function(input)
+			if input.UserInputType.Name == "MouseButton1" then
+				option:SetState(not option.state)
+			end
+			if input.UserInputType.Name == "MouseMovement" then
+				if not library.warning and not library.slider then
+					if option.style then
+						tickbox.ImageColor3 = library.flags["Menu Accent Color"]
+						--tweenService:Create(tickbox, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {ImageColor3 = library.flags["Menu Accent Color"]}):Play()
+					else
+						tickbox.BorderColor3 = library.flags["Menu Accent Color"]
+						tickboxOverlay.BorderColor3 = library.flags["Menu Accent Color"]
+						--tweenService:Create(tickbox, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BorderColor3 = library.flags["Menu Accent Color"]}):Play()
+						--tweenService:Create(tickboxOverlay, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BorderColor3 = library.flags["Menu Accent Color"]}):Play()
+					end
+				end
+				if option.tip then
+					library.tooltip.Text = option.tip
+					library.tooltip.Size = UDim2.new(0, textService:GetTextSize(option.tip, 15, Enum.Font.Code, Vector2.new(9e9, 9e9)).X, 0, 20)
+				end
 			end
 		end)
-		endConn = UserInputService.InputEnded:Connect(function(ended)
-			if ended.UserInputType == input.UserInputType then
-				dragging = false
-				Tween(knob, { Size = UDim2.fromOffset(9, 9) }, EASE_FAST)
-				if moveConn then moveConn:Disconnect() moveConn = nil end
-				if endConn then endConn:Disconnect() endConn = nil end
+
+		option.interest.InputChanged:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				if option.tip then
+					library.tooltip.Position = UDim2.new(0, input.Position.X + 26, 0, input.Position.Y + 36)
+				end
 			end
 		end)
-	end))
 
-	Disableable(api, { name, valueLabel }, opts)
+		option.interest.InputEnded:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				if option.style then
+					tickbox.ImageColor3 = Color3.new()
+					--tweenService:Create(tickbox, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {ImageColor3 = Color3.new()}):Play()
+				else
+					tickbox.BorderColor3 = Color3.new()
+					tickboxOverlay.BorderColor3 = Color3.new()
+					--tweenService:Create(tickbox, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BorderColor3 = Color3.new()}):Play()
+					--tweenService:Create(tickboxOverlay, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BorderColor3 = Color3.new()}):Play()
+				end
+				library.tooltip.Position = UDim2.new(2)
+			end
+		end)
 
-	if flag then
-		Library.Flags[flag] = value
-		Library:Register(flag, {
-			Type = "Slider",
-			Get = function() return value end,
-			Set = function(v) api:Set(tonumber(v) or min) end,
-		})
+		function option:SetState(state, nocallback)
+			state = typeof(state) == "boolean" and state
+			state = state or false
+			library.flags[self.flag] = state
+			self.state = state
+			option.title.TextColor3 = state and Color3.fromRGB(210, 210, 210) or Color3.fromRGB(160, 160, 160)
+			if option.style then
+				tickboxOverlay.Visible = state
+			else
+				tickboxOverlay.BackgroundTransparency = state and 1 or 0
+			end
+			if not nocallback then
+				self.callback(state)
+			end
+		end
+
+		if option.state ~= nil then
+			delay(1, function()
+				if library then
+					option.callback(option.state)
+				end
+			end)
+		end
+
+		setmetatable(option, {__newindex = function(t, i, v)
+			if i == "Text" then
+				option.title.Text = tostring(v)
+			end
+		end})
 	end
-	render(value, false)
-	return api
-end
 
-function BuildColorPicker(owner, swatch, opts)
-	opts = opts or {}
-	local flag = FlagOf(opts)
-	local useAlpha = opts.Alpha ~= false
-	local base = opts.Default or Color3.fromRGB(255, 255, 255)
-	local alpha = opts.DefaultAlpha or 1
-	local hue, sat, val = base:ToHSV()
+	library.createButton = function(option, parent)
+		option.hasInit = true
 
-	local panel = owner.Window:CreateFloating(198, false, owner.Float)
-	local z = panel.Frame.ZIndex
-
-	local area = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 106),
-		BackgroundTransparency = 1,
-		ZIndex = z,
-		Parent = panel.Content,
-	})
-
-	local sv = New("TextButton", {
-		Size = UDim2.new(1, -22, 1, 0),
-		BackgroundColor3 = Color3.fromHSV(hue, 1, 1),
-		AutoButtonColor = false,
-		Text = "",
-		BorderSizePixel = 0,
-		ZIndex = z,
-		Parent = area,
-	})
-	Corner(sv, 4)
-	local light = New("Frame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		BorderSizePixel = 0,
-		ZIndex = z,
-		Parent = sv,
-	})
-	Corner(light, 4)
-	New("UIGradient", {
-		Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0),
-			NumberSequenceKeypoint.new(1, 1),
-		}),
-		Parent = light,
-	})
-	local shade = New("Frame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-		ThemeTag = { BackgroundColor3 = false },
-		BorderSizePixel = 0,
-		ZIndex = z,
-		Parent = sv,
-	})
-	Corner(shade, 4)
-	New("UIGradient", {
-		Rotation = 90,
-		Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1),
-			NumberSequenceKeypoint.new(1, 0),
-		}),
-		Parent = shade,
-	})
-	local svCursor = New("Frame", {
-		Size = UDim2.fromOffset(10, 10),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundTransparency = 1,
-		ZIndex = z + 1,
-		Parent = sv,
-	})
-	Corner(svCursor, 5)
-	Stroke(svCursor, Color3.fromRGB(255, 255, 255), 2)
-
-	local hueBar = New("TextButton", {
-		Size = UDim2.new(0, 14, 1, 0),
-		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.fromScale(1, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		AutoButtonColor = false,
-		Text = "",
-		BorderSizePixel = 0,
-		ZIndex = z,
-		Parent = area,
-	})
-	Corner(hueBar, 4)
-	New("UIGradient", { Rotation = 90, Color = HUE_SEQUENCE, Parent = hueBar })
-	local hueCursor = New("Frame", {
-		Size = UDim2.new(1, 4, 0, 3),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.new(0.5, 0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		BorderSizePixel = 0,
-		ZIndex = z + 1,
-		Parent = hueBar,
-	})
-	Corner(hueCursor, 2)
-
-	local alphaBar, alphaCursor, alphaGradient
-	if useAlpha then
-		local track = New("Frame", {
-			Size = UDim2.new(1, 0, 0, 10),
-			BackgroundColor3 = Theme.Track,
-			BorderSizePixel = 0,
-			LayoutOrder = 2,
-			ZIndex = z,
-			Parent = panel.Content,
-			ThemeTag = { BackgroundColor3 = "Track" },
+		option.main = library:Create("Frame", {
+			LayoutOrder = option.position,
+			Size = UDim2.new(1, 0, 0, 28),
+			BackgroundTransparency = 1,
+			Parent = parent
 		})
-		Corner(track, 3)
-		alphaBar = New("TextButton", {
-			Size = UDim2.fromScale(1, 1),
-			BackgroundColor3 = base,
-			AutoButtonColor = false,
-			Text = "",
-			BorderSizePixel = 0,
-			ZIndex = z,
-			Parent = track,
+
+		option.title = library:Create("TextLabel", {
+			AnchorPoint = Vector2.new(0.5, 1),
+			Position = UDim2.new(0.5, 0, 1, -5),
+			Size = UDim2.new(1, -12, 0, 20),
+			BackgroundColor3 = Color3.fromRGB(50, 50, 50),
+			BorderColor3 = Color3.new(),
+			Text = option.text,
+			TextColor3 = Color3.new(1, 1, 1),
+			TextSize = 15,
+			Font = Enum.Font.Code,
+			Parent = option.main
 		})
-		Corner(alphaBar, 3)
-		alphaGradient = New("UIGradient", {
-			Color = ColorSequence.new(base),
-			Transparency = NumberSequence.new({
-				NumberSequenceKeypoint.new(0, 1),
-				NumberSequenceKeypoint.new(1, 0),
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.fromRGB(60, 60, 60),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.title
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, -2, 1, -2),
+			Position = UDim2.new(0, 1, 0, 1),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.new(),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.title
+		})
+
+		library:Create("UIGradient", {
+			Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 180, 180)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(253, 253, 253)),
 			}),
-			Parent = alphaBar,
+			Rotation = -90,
+			Parent = option.title
 		})
-		alphaCursor = New("Frame", {
-			Size = UDim2.new(0, 3, 1, 4),
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.new(1, 0, 0.5, 0),
-			BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-			BorderSizePixel = 0,
-			ZIndex = z + 1,
-			Parent = alphaBar,
-		})
-		Corner(alphaCursor, 2)
-	end
 
-	local hexField = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 24),
-		BackgroundColor3 = Theme.Field,
-		BorderSizePixel = 0,
-		ClipsDescendants = true,
-		LayoutOrder = 3,
-		ZIndex = z,
-		Parent = panel.Content,
-		ThemeTag = { BackgroundColor3 = "Field" },
-	})
-	Corner(hexField, 4)
-	local hexStroke = Stroke(hexField, Theme.Border)
-	local hexBox = New("TextBox", {
-		Size = UDim2.new(1, -16, 1, 0),
-		Position = UDim2.fromOffset(8, 0),
-		BackgroundTransparency = 1,
-		Text = ToHex(base, alpha),
-		TextColor3 = Theme.TextBright,
-		TextSize = 12,
-		Font = Theme.Font,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ClearTextOnFocus = false,
-		ZIndex = z,
-		Parent = hexField,
-		ThemeTag = { TextColor3 = "TextBright" },
-	})
+		option.title.InputBegan:connect(function(input)
+			if input.UserInputType.Name == "MouseButton1" then
+				option.callback()
+				if library then
+					library.flags[option.flag] = true
+				end
+				if option.tip then
+					library.tooltip.Text = option.tip
+					library.tooltip.Size = UDim2.new(0, textService:GetTextSize(option.tip, 15, Enum.Font.Code, Vector2.new(9e9, 9e9)).X, 0, 20)
+				end
+			end
+			if input.UserInputType.Name == "MouseMovement" then
+				if not library.warning and not library.slider then
+					option.title.BorderColor3 = library.flags["Menu Accent Color"]
+				end
+			end
+		end)
 
-	local api = { Instance = swatch, Swatch = swatch, Color = base, Alpha = alpha }
-	local editing = false
+		option.title.InputChanged:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				if option.tip then
+					library.tooltip.Position = UDim2.new(0, input.Position.X + 26, 0, input.Position.Y + 36)
+				end
+			end
+		end)
 
-	local function current()
-		return Color3.fromHSV(hue, sat, val)
-	end
-
-	local function render()
-		local color = current()
-		api.Color = color
-		api.Alpha = alpha
-		sv.BackgroundColor3 = Color3.fromHSV(hue, 1, 1)
-		svCursor.Position = UDim2.fromScale(sat, 1 - val)
-		hueCursor.Position = UDim2.new(0.5, 0, hue, 0)
-		swatch.BackgroundColor3 = color
-		swatch.BackgroundTransparency = useAlpha and (1 - alpha) * 0.75 or 0
-		if alphaGradient then
-			alphaGradient.Color = ColorSequence.new(color)
-			alphaCursor.Position = UDim2.new(alpha, 0, 0.5, 0)
-		end
-		if not editing then hexBox.Text = ToHex(color, alpha) end
-		if flag then
-			Library.Flags[flag] = ToHex(color, alpha)
-			Library:MarkDirty(flag)
-		end
-	end
-
-	local function fire()
-		Library:SafeCallback(opts.Text or "color picker", opts.Callback, current(), alpha)
-	end
-
-	function api:Set(color, newAlpha, silent)
-		local parsed, parsedAlpha = FromHex(color)
-		if parsed then
-			color = parsed
-			newAlpha = newAlpha or parsedAlpha
-		end
-		if typeof(color) == "Color3" then
-			hue, sat, val = color:ToHSV()
-		end
-		if newAlpha then alpha = math.clamp(newAlpha, 0, 1) end
-		render()
-		if not silent then fire() end
-	end
-
-	function api:Get()
-		return current(), alpha
-	end
-
-	BindDrag(sv, function(position)
-		sat = math.clamp((position.X - sv.AbsolutePosition.X) / math.max(sv.AbsoluteSize.X, 1), 0, 1)
-		val = 1 - math.clamp((position.Y - sv.AbsolutePosition.Y) / math.max(sv.AbsoluteSize.Y, 1), 0, 1)
-		render()
-		fire()
-	end)
-
-	BindDrag(hueBar, function(position)
-		hue = math.clamp((position.Y - hueBar.AbsolutePosition.Y) / math.max(hueBar.AbsoluteSize.Y, 1), 0, 1)
-		render()
-		fire()
-	end)
-
-	if alphaBar then
-		BindDrag(alphaBar, function(position)
-			alpha = math.clamp((position.X - alphaBar.AbsolutePosition.X) / math.max(alphaBar.AbsoluteSize.X, 1), 0, 1)
-			render()
-			fire()
+		option.title.InputEnded:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				option.title.BorderColor3 = Color3.new()
+				library.tooltip.Position = UDim2.new(2)
+			end
 		end)
 	end
 
-	Track(hexBox.Focused:Connect(function()
-		editing = true
-		Tween(hexStroke, { Color = Theme.Accent }, EASE_FAST)
-	end))
-	Track(hexBox.FocusLost:Connect(function()
-		editing = false
-		Tween(hexStroke, { Color = Theme.Border }, EASE_FAST)
-		local parsed, parsedAlpha = FromHex(hexBox.Text)
-		if parsed then
-			api:Set(parsed, parsedAlpha)
+	library.createBind = function(option, parent)
+		option.hasInit = true
+
+		local binding
+		local holding
+		local Loop
+
+		if option.sub then
+			option.main = option:getMain()
 		else
-			render()
+			option.main = option.main or library:Create("Frame", {
+				LayoutOrder = option.position,
+				Size = UDim2.new(1, 0, 0, 20),
+				BackgroundTransparency = 1,
+				Parent = parent
+			})
+
+			library:Create("TextLabel", {
+				Position = UDim2.new(0, 6, 0, 0),
+				Size = UDim2.new(1, -12, 1, 0),
+				BackgroundTransparency = 1,
+				Text = option.text,
+				TextSize = 15,
+				Font = Enum.Font.Code,
+				TextColor3 = Color3.fromRGB(210, 210, 210),
+				TextXAlignment = Enum.TextXAlignment.Left,
+				Parent = option.main
+			})
 		end
-	end))
 
-	Track(swatch.Activated:Connect(function()
-		if api.Enabled == false then return end
-		owner.Window:ToggleFloating(panel, swatch)
-	end))
-
-	Disableable(api, {}, opts)
-	Library:OnRepaint(render)
-
-	if flag then
-		Library.Flags[flag] = ToHex(base, alpha)
-		Library:Register(flag, {
-			Type = "ColorPicker",
-			Get = function() return ToHex(current(), alpha) end,
-			Set = function(v) api:Set(v) end,
+		local bindinput = library:Create(option.sub and "TextButton" or "TextLabel", {
+			Position = UDim2.new(1, -6 - (option.subpos or 0), 0, option.sub and 2 or 3),
+			SizeConstraint = Enum.SizeConstraint.RelativeYY,
+			BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+			BorderSizePixel = 0,
+			TextSize = 15,
+			Font = Enum.Font.Code,
+			TextColor3 = Color3.fromRGB(160, 160, 160),
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Parent = option.main
 		})
-	end
 
-	render()
-	return api
-end
-
-function ColorSwatch(parent, props)
-	local swatch = New("TextButton", props)
-	Corner(swatch, 3)
-	Stroke(swatch, Theme.Border)
-	return swatch
-end
-
-function Elements:ColorPicker(opts)
-	opts = opts or {}
-	local row = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 22),
-		BackgroundTransparency = 1,
-		Parent = self.Container,
-	})
-	local name = Label(row, opts.Text or "color", (LabelColor(opts, Theme.Text)))
-	name.Size = UDim2.new(1, -36, 1, 0)
-
-	local swatch = ColorSwatch(row, {
-		Size = UDim2.fromOffset(28, 14),
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, 0, 0.5, 0),
-		BackgroundColor3 = opts.Default or Color3.fromRGB(255, 255, 255),
-		AutoButtonColor = false,
-		Text = "",
-		BorderSizePixel = 0,
-		Parent = row,
-	})
-
-	local api = BuildColorPicker(self, swatch, opts)
-	api.Instance = row
-	return api
-end
-
-function Elements:Keybind(opts)
-	opts = opts or {}
-	local flag = FlagOf(opts)
-	local key = opts.Default
-	local row = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 22),
-		BackgroundTransparency = 1,
-		Parent = self.Container,
-	})
-	local name = Label(row, opts.Text or "keybind", (LabelColor(opts, Theme.Text)))
-	name.Size = UDim2.new(1, -80, 1, 0)
-
-	local pill = New("TextButton", {
-		Size = UDim2.new(0, 0, 0, 20),
-		AutomaticSize = Enum.AutomaticSize.X,
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, 0, 0.5, 0),
-		BackgroundColor3 = Theme.Field,
-		AutoButtonColor = false,
-		Text = "",
-		BorderSizePixel = 0,
-		Parent = row,
-		ThemeTag = { BackgroundColor3 = "Field" },
-	})
-	Corner(pill, 4)
-	Stroke(pill, Theme.Border)
-	Pad(pill, 0, 8)
-	local pl = Label(pill, "", Theme.TextDim, 12)
-	pl.Size = UDim2.new(0, 0, 1, 0)
-	pl.AutomaticSize = Enum.AutomaticSize.X
-
-	local api
-	local listening = false
-	local held = false
-	local active = opts.Default == true
-	local mode = string.lower(opts.Mode or "press")
-	local isToggle = mode == "toggle"
-
-	local function refresh()
-		if listening then
-			pl.Text = 'key: <font color="' .. AccentHex() .. '">...</font>'
-		elseif key then
-			pl.Text = 'key: <font color="' .. AccentHex() .. '">' .. key .. "</font>"
-		else
-			pl.Text = "key: NONE"
+		if option.sub then
+			bindinput.AutoButtonColor = false
 		end
-	end
-	refresh()
 
-	local function apply()
-		if flag then
-			Library.Flags[flag] = key or ""
-			Library:MarkDirty(flag)
-		end
-		Library:RefreshHotkeys()
-		Library:SafeCallback(opts.Text or "keybind", opts.OnChanged, key)
-	end
-
-	Track(pill.Activated:Connect(function()
-		if api and api.Enabled == false then return end
-		listening = true
-		Library.Binding = true
-		refresh()
-		Tween(pill, { BackgroundColor3 = Theme.FieldHover }, EASE_FAST)
-	end))
-	Track(pill.MouseButton2Click:Connect(function()
-		key = nil
-		listening = false
-		Library.Binding = false
-		refresh()
-		apply()
-	end))
-	Track(UserInputService.InputBegan:Connect(function(input, gpe)
-		local n = KeyName(input)
-		if listening then
-			if input.UserInputType == Enum.UserInputType.MouseButton1 then
-				listening = false
-				Library.Binding = false
-				refresh()
-				Tween(pill, { BackgroundColor3 = Theme.Field }, EASE_FAST)
-				return
+		local interest = option.sub and bindinput or option.main
+		local inContact
+		interest.InputEnded:connect(function(input)
+			if input.UserInputType.Name == "MouseButton1" then
+				binding = true
+				bindinput.Text = "[...]"
+				bindinput.Size = UDim2.new(0, -textService:GetTextSize(bindinput.Text, 16, Enum.Font.Code, Vector2.new(9e9, 9e9)).X, 0, 16)
+				bindinput.TextColor3 = library.flags["Menu Accent Color"]
 			end
-			if input.KeyCode == Enum.KeyCode.Escape then
-				key = nil
-			elseif n then
-				key = n
+		end)
+
+		library:AddConnection(inputService.InputBegan, function(input)
+			if inputService:GetFocusedTextBox() then return end
+			if binding then
+				local key = (table.find(whitelistedMouseinputs, input.UserInputType) and not option.nomouse) and input.UserInputType
+				option:SetKey(key or (not table.find(blacklistedKeys, input.KeyCode)) and input.KeyCode)
 			else
-				return
-			end
-			listening = false
-			Library.Binding = false
-			refresh()
-			Tween(pill, { BackgroundColor3 = Theme.Field }, EASE_FAST)
-			apply()
-			return
-		end
-		if gpe or not key or n ~= key then return end
-		if api and api.Enabled == false then return end
-		if isToggle then
-			active = not active
-			if api then api.Active = active end
-			Library:RefreshHotkeys()
-			Library:SafeCallback(opts.Text or "keybind", opts.Callback, active)
-		else
-			held = true
-			Library:RefreshHotkeys()
-			Library:SafeCallback(opts.Text or "keybind", opts.Callback, true)
-		end
-	end))
-	Track(UserInputService.InputEnded:Connect(function(input)
-		if isToggle or not held then return end
-		if key and KeyName(input) == key then
-			held = false
-			Library:RefreshHotkeys()
-			Library:SafeCallback(opts.Text or "keybind", opts.Callback, false)
-		end
-	end))
-
-	api = {
-		Instance = row,
-		Active = active,
-		Get = function() return key or "" end,
-		Set = function(_, k)
-			key = (k ~= "" and k) or nil
-			refresh()
-			apply()
-		end,
-	}
-
-	Disableable(api, { name, pl }, opts)
-
-	Library:RegisterHotkey(function()
-		return {
-			Label = opts.Text or "keybind",
-			Key = key,
-			Active = isToggle and active or held,
-			Visible = key ~= nil and (isToggle or held),
-		}
-	end)
-
-	Library:OnRepaint(refresh)
-
-	if flag then
-		Library.Flags[flag] = key or ""
-		Library:Register(flag, {
-			Type = "Keybind",
-			Get = function() return key or "" end,
-			Set = function(v) api:Set(v) end,
-		})
-	end
-	if key then apply() end
-	return api
-end
-
-function Elements:Search(opts)
-	opts = opts or {}
-	local flag = opts.Flag or nil
-	local row = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 26),
-		BackgroundTransparency = 1,
-		Parent = self.Container,
-	})
-	local field = New("Frame", {
-		Size = UDim2.new(1, -56, 1, 0),
-		BackgroundColor3 = Theme.Field,
-		BorderSizePixel = 0,
-		ClipsDescendants = true,
-		Parent = row,
-		ThemeTag = { BackgroundColor3 = "Field" },
-	})
-	Corner(field, 5)
-	local fStroke = Stroke(field, Theme.Border)
-	local box = New("TextBox", {
-		Size = UDim2.new(1, -20, 1, 0),
-		Position = UDim2.fromOffset(10, 0),
-		BackgroundTransparency = 1,
-		Text = opts.Default or "",
-		PlaceholderText = opts.Placeholder or "",
-		PlaceholderColor3 = Theme.TextDim,
-		TextColor3 = Theme.TextBright,
-		TextSize = Theme.TextSize,
-		Font = Theme.Font,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ClearTextOnFocus = false,
-		Parent = field,
-		ThemeTag = { PlaceholderColor3 = "TextDim", TextColor3 = "TextBright" },
-	})
-	local side = Label(row, opts.Label or "search", Theme.TextDim)
-	side.AnchorPoint = Vector2.new(1, 0.5)
-	side.Position = UDim2.new(1, 0, 0.5, 0)
-	side.Size = UDim2.fromOffset(48, 18)
-	side.TextXAlignment = Enum.TextXAlignment.Right
-
-	Track(box.Focused:Connect(function()
-		Tween(fStroke, { Color = Theme.Accent }, EASE_FAST)
-	end))
-	Track(box.FocusLost:Connect(function(enter)
-		Tween(fStroke, { Color = Theme.Border }, EASE_FAST)
-		Library:SafeCallback(opts.Text or "input", opts.Callback, box.Text, enter)
-	end))
-	if opts.Live then
-		Track(box:GetPropertyChangedSignal("Text"):Connect(function()
-			Library:SafeCallback(opts.Text or "search", opts.Callback, box.Text, false)
-		end))
-	end
-
-	local api = Disableable({
-		Instance = row,
-		Box = box,
-		Get = function() return box.Text end,
-		Set = function(_, v) box.Text = tostring(v or "") end,
-	}, { box, side }, opts)
-	if flag then
-		Library.Flags[flag] = box.Text
-		Library:Register(flag, {
-			Type = "Input",
-			Get = function() return box.Text end,
-			Set = function(v)
-				box.Text = tostring(v or "")
-				Library:SafeCallback(opts.Text or "search", opts.Callback, box.Text, false)
-			end,
-		})
-	end
-	return api
-end
-
-local Section = setmetatable({}, { __index = Elements })
-Section.__index = Section
-
-local function CreateSection(window, parent, title, order)
-	local borderTitle = Library.SectionTitleStyle == "border"
-
-	local frame = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = Theme.Section,
-		BorderSizePixel = 0,
-		LayoutOrder = order,
-		Parent = parent,
-		ThemeTag = { BackgroundColor3 = "Section" },
-	})
-	Corner(frame, 7)
-	Stroke(frame, Theme.SectionBorder)
-
-	-- the padded, laid out area, kept separate so an absolutely positioned
-	-- title is not captured by the list layout
-	local inner = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = frame,
-	})
-	Pad(inner, borderTitle and 18 or 12, 14, 14, 14)
-	local frameList = List(inner, 0)
-
-	local header, htitle, hchev
-
-	if borderTitle then
-		-- the title sits on the stroke, its own background hides the line
-		header = New("TextButton", {
-			Size = UDim2.fromOffset(0, 16),
-			AutomaticSize = Enum.AutomaticSize.X,
-			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.fromOffset(12, 0),
-			BackgroundTransparency = 1,
-			AutoButtonColor = false,
-			Text = "",
-			ZIndex = 3,
-			Parent = frame,
-		})
-		Pad(header, 0, 6, 0, 6)
-
-		-- a thin strip on the stroke line only, so the title reads as a
-		-- notch in the border instead of a chip sitting on the card
-		New("Frame", {
-			Size = UDim2.new(1, 0, 0, 3),
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(0.5, 0.5),
-			BackgroundColor3 = Theme.Window,
-			BorderSizePixel = 0,
-			ZIndex = 2,
-			Parent = header,
-			ThemeTag = { BackgroundColor3 = "Window" },
-		})
-
-		local row = New("Frame", {
-			Size = UDim2.new(0, 0, 1, 0),
-			AutomaticSize = Enum.AutomaticSize.X,
-			BackgroundTransparency = 1,
-			ZIndex = 3,
-			Parent = header,
-		})
-		local rowList = List(row, 5, Enum.FillDirection.Horizontal)
-		rowList.VerticalAlignment = Enum.VerticalAlignment.Center
-
-		htitle = Label(row, title, Theme.TextBright, Theme.TextSize, Theme.FontMedium)
-		htitle.Size = UDim2.new(0, 0, 1, 0)
-		htitle.AutomaticSize = Enum.AutomaticSize.X
-		htitle.ZIndex = 3
-
-		hchev = Chevron(row, Theme.TextDim)
-		hchev.LayoutOrder = 2
-		hchev.ZIndex = 3
-	else
-		header = New("TextButton", {
-			Size = UDim2.new(1, 0, 0, 22),
-			BackgroundTransparency = 1,
-			AutoButtonColor = false,
-			Text = "",
-			Parent = inner,
-		})
-		htitle = Label(header, title, Theme.TextBright, Theme.TextSize + 1, Theme.FontMedium)
-		htitle.Size = UDim2.new(1, -16, 1, 0)
-		hchev = Chevron(header, Theme.TextDim)
-		hchev.AnchorPoint = Vector2.new(0, 0.5)
-		hchev.Position = UDim2.new(0, htitle.TextBounds.X + 6, 0.5, 1)
-		Track(htitle:GetPropertyChangedSignal("TextBounds"):Connect(function()
-			hchev.Position = UDim2.new(0, htitle.TextBounds.X + 6, 0.5, 1)
-		end))
-	end
-
-	local body = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		ClipsDescendants = false,
-		LayoutOrder = 2,
-		Parent = inner,
-	})
-	local content = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = body,
-	})
-	List(content, 9)
-	Pad(content, 6, 0, 0, 0)
-
-	local self = setmetatable(NewContainer(window, content), Section)
-	self.Frame = frame
-	self.Open = true
-
-	Track(header.Activated:Connect(function()
-		self.Open = not self.Open
-		body.ClipsDescendants = true
-		if self.Open then
-			body.Visible = true
-			body.Size = UDim2.new(1, 0, 0, 0)
-			local target = content.AbsoluteSize.Y / window.Scale.Scale
-			Tween(body, { Size = UDim2.new(1, 0, 0, target) }).Completed:Once(function()
-				if self.Open then
-					body.AutomaticSize = Enum.AutomaticSize.Y
-					body.ClipsDescendants = false
-				end
-			end)
-			Tween(hchev, { Rotation = 0 }, EASE_FAST)
-		else
-			local current = body.AbsoluteSize.Y / window.Scale.Scale
-			body.AutomaticSize = Enum.AutomaticSize.None
-			body.Size = UDim2.new(1, 0, 0, current)
-			Tween(body, { Size = UDim2.new(1, 0, 0, 0) }).Completed:Once(function()
-				if not self.Open then body.Visible = false end
-			end)
-			Tween(hchev, { Rotation = 180 }, EASE_FAST)
-		end
-		window:CloseFloating()
-	end))
-	Track(header.MouseEnter:Connect(function()
-		Tween(htitle, { TextColor3 = Theme.AccentSoft }, EASE_FAST)
-	end))
-	Track(header.MouseLeave:Connect(function()
-		Tween(htitle, { TextColor3 = Theme.TextBright }, EASE_FAST)
-	end))
-
-	return self
-end
-
-local Column = {}
-Column.__index = Column
-
-function Column:Section(title)
-	self.Order = self.Order + 1
-	return CreateSection(self.Window, self.Frame, title, self.Order)
-end
-
-local Tab = {}
-Tab.__index = Tab
-
-function Tab:Block()
-	if self.CurrentBlock then return self.CurrentBlock end
-
-	self.Order = self.Order + 1
-	local block = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		LayoutOrder = self.Order,
-		Parent = self.Page,
-	})
-	local list = List(block, 14, Enum.FillDirection.Horizontal)
-	list.SortOrder = Enum.SortOrder.LayoutOrder
-
-	self.Columns = {}
-	for i = 1, 2 do
-		local frame = New("Frame", {
-			Size = UDim2.new(0.5, -7, 0, 0),
-			AutomaticSize = Enum.AutomaticSize.Y,
-			BackgroundTransparency = 1,
-			LayoutOrder = i,
-			Parent = block,
-		})
-		List(frame, Library.SectionTitleStyle == "border" and 22 or 14)
-		self.Columns[i] = setmetatable({ Window = self.Window, Frame = frame, Order = 0 }, Column)
-	end
-
-	self.CurrentBlock = block
-	return block
-end
-
-function Tab:Column(index)
-	self:Block()
-	local slot = math.clamp(math.floor(tonumber(index) or 1), 1, #self.Columns)
-	return self.Columns[slot]
-end
-
-function Tab:Full(title)
-	self.Order = self.Order + 1
-	local section = CreateSection(self.Window, self.Page, title, self.Order)
-	self.CurrentBlock = nil
-	return section
-end
-
-function Tab:Section(title, columnIndex)
-	if columnIndex == "full" or columnIndex == "0" or tonumber(columnIndex) == 0 then
-		return self:Full(title)
-	end
-	return self:Column(columnIndex):Section(title)
-end
-
-local Window = {}
-Window.__index = Window
-
-function Window:CreateFloating(width, matchAnchor, parent)
-	local depth = parent and (parent.Depth + 1) or 1
-	local z = 118 + depth * 4
-	local frame = New("Frame", {
-		Size = UDim2.fromOffset(width > 0 and width or 160, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = Theme.PopupBg,
-		BorderSizePixel = 0,
-		Visible = false,
-		Active = true,
-		ZIndex = z,
-		Parent = self.Overlay,
-		ThemeTag = { BackgroundColor3 = "PopupBg" },
-	})
-	Corner(frame, 5)
-	Stroke(frame, matchAnchor and Theme.Accent or Theme.PopupBorder)
-	Pad(frame, 6)
-	local content = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		ZIndex = z,
-		Parent = frame,
-	})
-	List(content, 6)
-	return { Frame = frame, Content = content, MatchAnchor = matchAnchor, Parent = parent, Depth = depth }
-end
-
-function Window:CloseFloatingFrom(depth)
-	local stack = self.FloatStack
-	while #stack > 0 and stack[#stack].Depth >= depth do
-		local panel = table.remove(stack)
-		panel.Frame.Visible = false
-		if panel.OnClose then panel.OnClose() end
-	end
-	self.Blocker.Visible = #stack > 0
-end
-
-function Window:CloseFloating()
-	self:CloseFloatingFrom(1)
-end
-
-function Window:ToggleFloating(panel, anchor, matchWidth)
-	for _, open in ipairs(self.FloatStack) do
-		if open == panel then
-			self:CloseFloatingFrom(panel.Depth)
-			return
-		end
-	end
-	self:CloseFloatingFrom(panel.Depth)
-
-	local scale = self.Scale.Scale
-	local originX = (anchor.AbsolutePosition.X - self.Main.AbsolutePosition.X) / scale
-	local originY = (anchor.AbsolutePosition.Y - self.Main.AbsolutePosition.Y) / scale
-	local height = anchor.AbsoluteSize.Y / scale
-
-	if matchWidth then
-		panel.Frame.Size = UDim2.fromOffset(anchor.AbsoluteSize.X / scale, 0)
-	end
-	panel.Frame.Position = UDim2.fromOffset(originX, originY + height + 4)
-	panel.Frame.Visible = true
-	table.insert(self.FloatStack, panel)
-	self.Blocker.Visible = true
-	if panel.OnOpen then panel.OnOpen() end
-
-	local target = panel.Frame.Position
-	panel.Frame.Position = target - UDim2.fromOffset(0, 4)
-	Tween(panel.Frame, { Position = target }, EASE_FAST)
-end
-
-function Window:Tab(name, icon)
-	local opts = type(name) == "table" and name or { Title = name, Icon = icon }
-	local title = opts.Title or opts.Text or "tab"
-
-	local page = New("ScrollingFrame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ScrollBarThickness = 3,
-		ScrollBarImageColor3 = Theme.AccentDim,
-		ScrollBarImageTransparency = 0.3,
-		VerticalScrollBarInset = Enum.ScrollBarInset.None,
-		Visible = false,
-		Parent = self.Body,
-		ThemeTag = { ScrollBarImageColor3 = "AccentDim" },
-	})
-	local pageList = List(page, Library.SectionTitleStyle == "border" and 22 or 14)
-	pageList.SortOrder = Enum.SortOrder.LayoutOrder
-	Pad(page, Library.SectionTitleStyle == "border" and 12 or 2, 8, 2, 8)
-
-	local tab = setmetatable({
-		Window = self,
-		Page = page,
-		Columns = {},
-		Name = title,
-		Order = 0,
-	}, Tab)
-
-	local side = self.TabStyle == "side"
-
-	local button = New("TextButton", {
-		Size = side and UDim2.new(1, 0, 0, 30) or UDim2.new(0, 0, 1, 0),
-		AutomaticSize = (not side) and Enum.AutomaticSize.X or Enum.AutomaticSize.None,
-		BackgroundColor3 = Theme.Field,
-		BackgroundTransparency = 1,
-		AutoButtonColor = false,
-		Text = "",
-		LayoutOrder = self:NextTabOrder(),
-		Parent = self.TabBar,
-		ThemeTag = { BackgroundColor3 = "Field" },
-	})
-	if side then
-		Corner(button, 5)
-		New("Frame", {
-			Size = UDim2.fromOffset(2, 0),
-			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.new(0, 0, 0.5, 0),
-			BackgroundColor3 = Theme.Accent,
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			Name = "ActiveBar",
-			ZIndex = 2,
-			Parent = button,
-			ThemeTag = { BackgroundColor3 = "Accent" },
-		})
-		Corner(button:FindFirstChild("ActiveBar") or button, 2)
-	end
-
-	local row = New("Frame", {
-		Size = side and UDim2.new(1, -20, 1, 0) or UDim2.new(0, 0, 1, 0),
-		Position = side and UDim2.fromOffset(10, 0) or UDim2.fromOffset(0, 0),
-		AutomaticSize = (not side) and Enum.AutomaticSize.X or Enum.AutomaticSize.None,
-		BackgroundTransparency = 1,
-		Parent = button,
-	})
-	local rowList = List(row, 7, Enum.FillDirection.Horizontal)
-	rowList.VerticalAlignment = Enum.VerticalAlignment.Center
-
-	local icon = AttachIcon(row, opts.Icon, Theme.TextDim, 15)
-	if icon then
-		icon.Position = UDim2.fromOffset(0, 0)
-		icon.LayoutOrder = 1
-	end
-
-	local label = Label(row, title, Theme.TextDim, Theme.TextSize + 1)
-	label.Size = side and UDim2.new(1, icon and -22 or 0, 1, 0) or UDim2.new(0, 0, 1, 0)
-	label.AutomaticSize = (not side) and Enum.AutomaticSize.X or Enum.AutomaticSize.None
-	label.TextTruncate = Enum.TextTruncate.AtEnd
-	label.LayoutOrder = 2
-
-	tab.Button = button
-	tab.Label = label
-	tab.Icon = icon
-
-	local activeBar = side and button:FindFirstChild("ActiveBar") or nil
-
-	function tab:SetActive(active, animate)
-		local info = animate and EASE_FAST or TweenInfo.new(0)
-		local key = active and "Accent" or "TextDim"
-		local color = Theme[key]
-
-		-- retag so the active tab keeps its colour across theme changes
-		Library:Tag(label, { TextColor3 = key })
-		if icon then Library:Tag(icon, { ImageColor3 = key }) end
-		if activeBar then Library:Tag(activeBar, { BackgroundColor3 = "Accent" }) end
-
-		Tween(label, { TextColor3 = color }, info)
-		if icon then Tween(icon, { ImageColor3 = color }, info) end
-		if side then
-			Tween(button, { BackgroundTransparency = active and 0.85 or 1 }, info)
-			if activeBar then
-				Tween(activeBar, { BackgroundTransparency = active and 0 or 1 }, info)
-			end
-		end
-	end
-
-	table.insert(self.Tabs, tab)
-
-	Track(button.Activated:Connect(function()
-		self:SetTab(tab)
-	end))
-	Track(button.MouseEnter:Connect(function()
-		if self.ActiveTab == tab then return end
-		Tween(label, { TextColor3 = Theme.Text }, EASE_FAST)
-		if icon then Tween(icon, { ImageColor3 = Theme.Text }, EASE_FAST) end
-		if side then Tween(button, { BackgroundTransparency = 0.55 }, EASE_FAST) end
-	end))
-	Track(button.MouseLeave:Connect(function()
-		if self.ActiveTab == tab then return end
-		Tween(label, { TextColor3 = Theme.TextDim }, EASE_FAST)
-		if icon then Tween(icon, { ImageColor3 = Theme.TextDim }, EASE_FAST) end
-		if side then Tween(button, { BackgroundTransparency = 1 }, EASE_FAST) end
-	end))
-	Track(page:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
-		self:CloseFloating()
-	end))
-
-	if not self.ActiveTab then self:SetTab(tab) end
-	return tab
-end
-
-function Window:NextTabOrder()
-	self.TabOrder = (self.TabOrder or 0) + 1
-	return self.TabOrder
-end
-
-function Window:TabDivider(opts)
-	if self.TabStyle ~= "side" then return nil end
-	opts = opts or {}
-
-	local holder = New("Frame", {
-		Size = UDim2.new(1, 0, 0, opts.Height or 11),
-		BackgroundTransparency = 1,
-		LayoutOrder = self:NextTabOrder(),
-		Parent = self.TabBar,
-	})
-
-	local inset = opts.Inset or 12
-	local line = New("Frame", {
-		Size = UDim2.new(1, -inset * 2, 0, 1),
-		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, inset, 0.5, 0),
-		BackgroundColor3 = Theme.BorderSoft,
-		BorderSizePixel = 0,
-		Parent = holder,
-		ThemeTag = { BackgroundColor3 = "BorderSoft" },
-	})
-
-	if opts.Text then
-		holder.Size = UDim2.new(1, 0, 0, opts.Height or 24)
-		line:Destroy()
-		local label = Label(holder, opts.Text, Theme.TextDim, Theme.TextSize - 2)
-		label.Position = UDim2.fromOffset(inset, 0)
-		label.Size = UDim2.new(1, -inset * 2, 1, 0)
-		label.TextYAlignment = Enum.TextYAlignment.Bottom
-		return { Instance = holder, Label = label }
-	end
-
-	return { Instance = holder, Line = line }
-end
-
-function Window:SetTab(tab)
-	if type(tab) == "string" then
-		for _, t in ipairs(self.Tabs) do
-			if t.Name == tab then tab = t break end
-		end
-	end
-	if self.ActiveTab == tab then return end
-	self:CloseFloating()
-	if self.ActiveTab then
-		self.ActiveTab.Page.Visible = false
-		self.ActiveTab:SetActive(false, true)
-	end
-	self.ActiveTab = tab
-	tab.Page.Visible = true
-	tab.Page.Position = UDim2.fromOffset(0, 6)
-	Tween(tab.Page, { Position = UDim2.fromOffset(0, 0) })
-	tab:SetActive(true, true)
-end
-
-function Window:Action(text, callback)
-	local btn = New("TextButton", {
-		Size = UDim2.new(0, 0, 1, 0),
-		AutomaticSize = Enum.AutomaticSize.X,
-		BackgroundTransparency = 1,
-		AutoButtonColor = false,
-		Text = text,
-		TextColor3 = Theme.Accent,
-		TextSize = Theme.TextSize,
-		Font = Theme.FontMedium,
-		Parent = self.Footer,
-		ThemeTag = { TextColor3 = "Accent" },
-	})
-	Track(btn.MouseEnter:Connect(function()
-		Tween(btn, { TextColor3 = Theme.AccentSoft }, EASE_FAST)
-	end))
-	Track(btn.MouseLeave:Connect(function()
-		Tween(btn, { TextColor3 = Theme.Accent }, EASE_FAST)
-	end))
-	Track(btn.Activated:Connect(function()
-		Library:SafeCallback("action", callback)
-	end))
-	return btn
-end
-
-function Window:SetUserScale(value)
-	self.UserScale = math.clamp(tonumber(value) or 1, 0.6, 1.4)
-	if self.Refit then self.Refit() end
-	return self.UserScale
-end
-
-function Window:SetOpacity(alpha)
-	self.Opacity = math.clamp(tonumber(alpha) or 1, 0.2, 1)
-	self.Main.BackgroundTransparency = 1 - self.Opacity
-	return self.Opacity
-end
-
-function Window:SetSize(width, height)
-	self.Width = math.max(width, self.MinWidth)
-	self.Height = math.max(height, self.MinHeight)
-	self.Main.Size = UDim2.fromOffset(self.Width, self.Height)
-	if self.Refit then self.Refit() end
-end
-
-function Window:IconAction(icon, callback, order)
-	if not self.FooterLeft then return nil end
-
-	local button = New("ImageButton", {
-		Size = UDim2.fromOffset(18, 18),
-		BackgroundTransparency = 1,
-		ImageColor3 = Theme.TextDim,
-		LayoutOrder = order or 1,
-		Parent = self.FooterLeft,
-		ThemeTag = { ImageColor3 = "TextDim" },
-	})
-
-	local resolved = ResolveIcon(icon)
-	if resolved then
-		button.Image = resolved.Image
-		if resolved.RectOffset then button.ImageRectOffset = resolved.RectOffset end
-		if resolved.RectSize then button.ImageRectSize = resolved.RectSize end
-	end
-
-	Track(button.MouseEnter:Connect(function()
-		Tween(button, { ImageColor3 = Theme.Accent }, EASE_FAST)
-	end))
-	Track(button.MouseLeave:Connect(function()
-		Tween(button, { ImageColor3 = Theme.TextDim }, EASE_FAST)
-	end))
-	Track(button.Activated:Connect(function()
-		Library:SafeCallback("action", callback)
-	end))
-
-	return button
-end
-
-function Window:Modal(opts)
-	opts = opts or {}
-	local window = self
-
-	local root = New("Frame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Visible = false,
-		ZIndex = 200,
-		Parent = self.Main,
-	})
-
-	local scrim = New("TextButton", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-		ThemeTag = { BackgroundColor3 = false },
-		BackgroundTransparency = 1,
-		AutoButtonColor = false,
-		Text = "",
-		ZIndex = 200,
-		Parent = root,
-	})
-	Corner(scrim, 10)
-
-	local card = New("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = (opts.Height and opts.Height > 1)
-			and UDim2.fromOffset(opts.Width or 340, opts.Height)
-			or UDim2.new(0, opts.Width or 340, opts.Height or 0.78, 0),
-		BackgroundColor3 = Theme.Window,
-		BorderSizePixel = 0,
-		Active = true,
-		ZIndex = 210,
-		Parent = root,
-		ThemeTag = { BackgroundColor3 = "Window" },
-	})
-	Corner(card, 10)
-	Stroke(card, Theme.WindowBorder)
-	local cardScale = New("UIScale", { Parent = card })
-
-	local header = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 38),
-		BackgroundTransparency = 1,
-		ZIndex = 210,
-		Parent = card,
-	})
-	local heading = Label(header, opts.Title or "panel", Theme.TextBright, 14, Theme.FontMedium)
-	heading.Position = UDim2.fromOffset(14, 0)
-	heading.Size = UDim2.new(1, -48, 1, 0)
-	heading.ZIndex = 210
-
-	local close = New("TextButton", {
-		Size = UDim2.fromOffset(20, 20),
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -12, 0.5, 0),
-		BackgroundTransparency = 1,
-		AutoButtonColor = false,
-		Text = "",
-		ZIndex = 210,
-		Parent = header,
-	})
-	local closeBars = {}
-	for i = 1, 2 do
-		local bar = New("Frame", {
-			Size = UDim2.fromOffset(13, 2),
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(0.5, 0.5),
-			Rotation = i == 1 and 45 or -45,
-			BackgroundColor3 = Theme.TextDim,
-			BorderSizePixel = 0,
-			ZIndex = 210,
-			Parent = close,
-			ThemeTag = { BackgroundColor3 = "TextDim" },
-		})
-		Corner(bar, 1)
-		closeBars[i] = bar
-	end
-
-	New("Frame", {
-		Size = UDim2.new(1, 0, 0, 1),
-		Position = UDim2.new(0, 0, 0, 38),
-		BackgroundColor3 = Theme.BorderSoft,
-		BorderSizePixel = 0,
-		ZIndex = 210,
-		Parent = card,
-		ThemeTag = { BackgroundColor3 = "BorderSoft" },
-	})
-
-	local scroller = New("ScrollingFrame", {
-		Size = UDim2.new(1, -16, 1, -50),
-		Position = UDim2.fromOffset(8, 45),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ScrollBarThickness = 3,
-		ScrollBarImageColor3 = Theme.AccentDim,
-		VerticalScrollBarInset = Enum.ScrollBarInset.None,
-		ZIndex = 210,
-		Parent = card,
-		ThemeTag = { ScrollBarImageColor3 = "AccentDim" },
-	})
-	List(scroller, 9)
-	Pad(scroller, 4, 10, 8, 6)
-
-	local api = {
-		Root = root,
-		Frame = card,
-		Scroller = scroller,
-		Content = NewContainer(self, scroller),
-		Open = false,
-	}
-
-	local function setBlur(state)
-		if state then
-			if api.Blur then return end
-			pcall(function()
-				local blur = Instance.new("BlurEffect")
-				blur.Name = "FacilityModalBlur"
-				blur.Size = 0
-				blur.Parent = Lighting
-				api.Blur = blur
-				Tween(blur, { Size = opts.Blur or 16 })
-			end)
-		elseif api.Blur then
-			local blur = api.Blur
-			api.Blur = nil
-			pcall(function()
-				Tween(blur, { Size = 0 }).Completed:Once(function()
-					blur:Destroy()
-				end)
-			end)
-		end
-	end
-
-	function api:SetOpen(state)
-		if state == self.Open then return end
-		self.Open = state
-		if state then
-			window:CloseFloating()
-			root.Visible = true
-			scrim.BackgroundTransparency = 1
-			cardScale.Scale = 0.96
-			Tween(scrim, { BackgroundTransparency = opts.Dim or 0.25 })
-			Tween(cardScale, { Scale = 1 })
-			setBlur(true)
-		else
-			window:CloseFloating()
-			Tween(scrim, { BackgroundTransparency = 1 })
-			Tween(cardScale, { Scale = 0.96 }).Completed:Once(function()
-				if not api.Open then root.Visible = false end
-			end)
-			setBlur(false)
-			if api.OnClose then task.spawn(api.OnClose) end
-		end
-	end
-
-	function api:Toggle()
-		self:SetOpen(not self.Open)
-	end
-
-	Track(scrim.Activated:Connect(function() api:SetOpen(false) end))
-	Track(close.Activated:Connect(function() api:SetOpen(false) end))
-	Track(close.MouseEnter:Connect(function()
-		for _, bar in ipairs(closeBars) do Tween(bar, { BackgroundColor3 = Theme.Danger }, EASE_FAST) end
-	end))
-	Track(close.MouseLeave:Connect(function()
-		for _, bar in ipairs(closeBars) do Tween(bar, { BackgroundColor3 = Theme.TextDim }, EASE_FAST) end
-	end))
-	Track(UserInputService.InputBegan:Connect(function(input, gpe)
-		if not gpe and api.Open and input.KeyCode == Enum.KeyCode.Escape then
-			api:SetOpen(false)
-		end
-	end))
-
-	self.Modals = self.Modals or {}
-	table.insert(self.Modals, api)
-	return api
-end
-
-function Window:Confirm(opts)
-	opts = opts or {}
-
-	local modal = self:Modal({
-		Title = opts.Title or "confirm",
-		Width = opts.Width or 280,
-		Height = opts.Height or 150,
-		Dim = opts.Dim or 0.45,
-		Blur = opts.Blur or 10,
-	})
-
-	local content = modal.Content
-	content:Label(opts.Text or "are you sure?", { Style = "text" })
-
-	modal.Scroller.Size = UDim2.new(1, -16, 1, -95)
-
-	local answered = false
-	local function answer(callback)
-		answered = true
-		modal:SetOpen(false)
-		Library:SafeCallback("action", callback)
-	end
-
-	local footer = New("Frame", {
-		Size = UDim2.new(1, -24, 0, 30),
-		AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(0, 12, 1, -12),
-		BackgroundTransparency = 1,
-		ZIndex = modal.Frame.ZIndex,
-		Parent = modal.Frame,
-	})
-	local footerContainer = NewContainer(self, footer)
-	footerContainer:ButtonRow({
-		{
-			Text = opts.Confirm or "save",
-			Callback = function() answer(opts.OnConfirm) end,
-		},
-		{
-			Text = opts.Cancel or "discard",
-			Callback = function() answer(opts.OnCancel) end,
-		},
-	})
-
-	modal.OnClose = function()
-		if not answered and opts.OnDismiss then task.spawn(opts.OnDismiss) end
-		answered = false
-	end
-
-	modal:SetOpen(true)
-	return modal
-end
-
-function Window:SetVisible(state)
-	self.Visible = state
-	if state then
-		self.Main.Visible = true
-		self.Scale.Scale = self.BaseScale * 0.97
-		Tween(self.Scale, { Scale = self.BaseScale }, EASE_FAST)
-	else
-		self:CloseFloating()
-		for _, modal in ipairs(self.Modals or {}) do modal:SetOpen(false) end
-		Tween(self.Scale, { Scale = self.BaseScale * 0.97 }, EASE_FAST).Completed:Once(function()
-			if not self.Visible then self.Main.Visible = false end
-		end)
-	end
-end
-
-function Library:Window(opts)
-	opts = opts or {}
-	local width = opts.Width or 620
-	local height = opts.Height or 560
-
-	-- load the saved theme before anything is drawn, so the key system,
-	-- the main window and every later element share the same palette
-	pcall(function()
-		local folder = opts.ThemeFolder or opts.Folder or "Facility"
-		local path = folder .. "/settings/theme.json"
-		if not (isfile and isfile(path)) then return end
-
-		local raw = readfile(path)
-		if not raw then return end
-
-		local ok, data = pcall(function()
-			return game:GetService("HttpService"):JSONDecode(raw)
-		end)
-		if not ok or type(data) ~= "table" or type(data.Colors) ~= "table" then return end
-
-		for key, hex in pairs(data.Colors) do
-			if Theme[key] ~= nil then
-				local color, alpha = FromHex(hex)
-				if color then
-					Theme[key] = color
-					if alpha then ThemeAlpha[key] = alpha end
-				end
-			end
-		end
-
-		-- the value to key map must follow, otherwise every element built
-		-- from here on is never recorded in the repaint registry
-		IndexTheme()
-	end)
-
-	-- ---- Discord RPC ----
-	if opts.Discord and opts.Discord.Enabled ~= false and opts.Discord.Invite then
-		local inv = opts.Discord.Invite
-		local remember = opts.Discord.RememberJoins ~= false
-		local joined = false
-
-		if remember then
-			pcall(function()
-				if isfile and isfile("facility_discord_" .. inv .. ".dat") then
-					joined = true
-				end
-			end)
-		end
-
-		if not joined then
-			pcall(function()
-				local req = request or http_request or (http and http.request)
-				if not req then return end
-				req({
-					Url = "http://127.0.0.1:6463/rpc?v=1",
-					Method = "POST",
-					Headers = {
-						["Content-Type"] = "application/json",
-						["Origin"] = "https://discord.com",
-					},
-					Body = game:GetService("HttpService"):JSONEncode({
-						cmd = "INVITE_BROWSER",
-						args = { code = inv },
-						nonce = tick(),
-					}),
-				})
-				if remember then
-					pcall(function()
-						if writefile then
-							writefile("facility_discord_" .. inv .. ".dat", "1")
-						end
-					end)
-				end
-			end)
-		end
-	end
-
-	-- ---- Key system ----
-	if opts.KeySystem then
-		local ks = opts.KeySettings or {}
-		local title = ks.Title or "Key System"
-		local subtitle = ks.Subtitle or "Enter your key to continue"
-		local note = ks.Note or ""
-		local fileName = (ks.FileName or "key") .. ".dat"
-		local saveKey = ks.SaveKey ~= false
-		local grabFromSite = ks.GrabKeyFromSite == true
-		local keys = ks.Key or {}
-
-		local keyValid = false
-
-		-- check saved key
-		if saveKey then
-			pcall(function()
-				if isfile and isfile(fileName) then
-					local saved = readfile(fileName)
-					if saved then saved = saved:gsub("%s+", "") end
-					local validKeys = keys
-					if grabFromSite and type(keys) == "table" then
-						local fresh = {}
-						for _, url in ipairs(keys) do
-							pcall(function()
-								local res = game:HttpGet(url)
-								if res then
-									for _, line in ipairs(string.split(res, "\n")) do
-										table.insert(fresh, line:gsub("%s+", ""))
-									end
-								end
-							end)
-						end
-						if #fresh > 0 then validKeys = fresh end
-					end
-					for _, k in ipairs(validKeys) do
-						if saved == k:gsub("%s+", "") then
-							keyValid = true
-							break
-						end
-					end
-				end
-			end)
-		end
-
-		if not keyValid then
-			local gui = New("ScreenGui", {
-				Name = RandomName(),
-				ResetOnSpawn = false,
-				IgnoreGuiInset = true,
-				AutoLocalize = false,
-				ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-				DisplayOrder = MAX_DISPLAY_ORDER,
-			})
-			ParentGui(gui)
-
-			local card = New("Frame", {
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Size = UDim2.fromOffset(520, 178),
-				Position = UDim2.fromScale(0.5, 0.5),
-				BackgroundColor3 = Theme.Window,
-				BorderSizePixel = 0,
-				Active = true,
-				Parent = gui,
-				ThemeTag = { BackgroundColor3 = "Window" },
-			})
-			Corner(card, 9)
-			Stroke(card, Theme.WindowBorder)
-
-			-- shadow
-			local shadowHolder = New("Frame", {
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Size = UDim2.new(1, 35, 1.096, 35),
-				Position = UDim2.fromScale(0.5, 0.5),
-				BackgroundTransparency = 1,
-				Parent = card,
-			})
-			New("ImageLabel", {
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				BackgroundTransparency = 1,
-				ZIndex = 0,
-				Image = "rbxassetid://5587865193",
-				ImageColor3 = Color3.fromRGB(20, 20, 20),
-				Size = UDim2.new(1.6, 0, 1.3, 0),
-				Position = UDim2.fromScale(0.5, 0.5),
-				ImageTransparency = 0.5,
-				Parent = shadowHolder,
-			})
-
-			-- title / subtitle (no logo)
-			local ksTitle = Label(card, title, Theme.TextBright, 14, Theme.FontMedium)
-			ksTitle.Position = UDim2.fromOffset(24, 22)
-			ksTitle.Size = UDim2.fromOffset(200, 16)
-
-			local ksSub = Label(card, subtitle, Theme.TextDim, 12)
-			ksSub.Position = UDim2.fromOffset(24, 40)
-			ksSub.Size = UDim2.fromOffset(200, 13)
-
-			-- right side: Get Key + description
-			local announce = Label(card, "Get Key", Theme.TextBright, 14, Theme.FontMedium)
-			announce.Position = UDim2.fromOffset(286, 22)
-			announce.Size = UDim2.fromOffset(210, 16)
-
-			local descr = New("TextLabel", {
-				BackgroundTransparency = 1,
-				Size = UDim2.fromOffset(210, 60),
-				Position = UDim2.fromOffset(286, 42),
-				TextColor3 = Theme.TextDim,
-				RichText = true,
-				Text = note ~= "" and note or ('To obtain the key, simply click on <font color="rgb(232,161,168)">Get-Key</font>. This will copy the key link to your clipboard. For any help, don\'t hesitate to ask on our Discord by clicking on <font color="rgb(120,170,230)">Discord</font>.'),
-				TextXAlignment = Enum.TextXAlignment.Left,
-				TextYAlignment = Enum.TextYAlignment.Top,
-				TextWrapped = true,
-				Font = Theme.Font,
-				TextSize = 12,
-				Parent = card,
-				ThemeTag = { TextColor3 = "TextDim" },
-			})
-
-			-- vertical divider
-			New("Frame", {
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Position = UDim2.fromOffset(262, 89),
-				Size = UDim2.new(0, 1, 1, -44),
-				BackgroundColor3 = Theme.BorderSoft,
-				BorderSizePixel = 0,
-				Parent = card,
-				ThemeTag = { BackgroundColor3 = "BorderSoft" },
-			})
-
-			-- input
-			local field = New("Frame", {
-				Position = UDim2.fromOffset(24, 68),
-				Size = UDim2.fromOffset(214, 32),
-				BackgroundColor3 = Theme.Field,
-				BorderSizePixel = 0,
-				ClipsDescendants = true,
-				Parent = card,
-				ThemeTag = { BackgroundColor3 = "Field" },
-			})
-			Corner(field, 6)
-			Stroke(field, Theme.Border)
-
-			local box = New("TextBox", {
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				BackgroundTransparency = 1,
-				Size = UDim2.new(1, -15, 0, 14),
-				Position = UDim2.new(0.517, 0, 0.5, 0),
-				TextXAlignment = Enum.TextXAlignment.Left,
-				PlaceholderText = "Input script key here...",
-				PlaceholderColor3 = Theme.TextDim,
-				Font = Theme.Font,
-				TextColor3 = Theme.Text,
-				TextSize = Theme.TextSize,
-				Text = "",
-				ClearTextOnFocus = false,
-				Parent = field,
-				ThemeTag = { PlaceholderColor3 = "TextDim", TextColor3 = "Text" },
-			})
-
-			-- validate button
-			local validateFrame = New("Frame", {
-				Position = UDim2.fromOffset(61, 124),
-				Size = UDim2.fromOffset(140, 30),
-				BackgroundColor3 = Theme.Accent,
-				BorderSizePixel = 0,
-				Parent = card,
-				ThemeTag = { BackgroundColor3 = "Accent" },
-			})
-			Corner(validateFrame, 6)
-
-			local btn = New("TextButton", {
-				Size = UDim2.fromScale(1, 1),
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Position = UDim2.fromScale(0.5, 0.5),
-				BackgroundTransparency = 1,
-				AutoButtonColor = false,
-				Text = "Validate Key",
-				TextColor3 = Color3.fromRGB(40, 32, 34),
-				TextSize = Theme.TextSize,
-				Font = Theme.FontMedium,
-				Parent = validateFrame,
-			})
-
-			local errorLabel = Label(card, "", Theme.Danger, 11)
-			errorLabel.Position = UDim2.fromOffset(24, 104)
-			errorLabel.Size = UDim2.fromOffset(214, 14)
-			errorLabel.Visible = false
-
-			-- get key button
-			if ks.GetKey then
-				local gkFrame = New("Frame", {
-					Position = UDim2.fromOffset(286, 124),
-					Size = UDim2.fromOffset(100, 30),
-					BackgroundColor3 = Theme.Accent,
-					BorderSizePixel = 0,
-					Parent = card,
-					ThemeTag = { BackgroundColor3 = "Accent" },
-				})
-				Corner(gkFrame, 6)
-				local gkBtn = New("TextButton", {
-					Size = UDim2.fromScale(1, 1),
-					BackgroundTransparency = 1,
-					AutoButtonColor = false,
-					Text = "Get-Key",
-					TextColor3 = Color3.fromRGB(40, 32, 34),
-					TextSize = Theme.TextSize,
-					Font = Theme.FontMedium,
-					Parent = gkFrame,
-				})
-				Track(gkBtn.Activated:Connect(function()
-					pcall(function() if setclipboard then setclipboard(ks.GetKey) end end)
-				end))
-			end
-
-			-- discord button
-			if ks.Discord then
-				local dcFrame = New("Frame", {
-					Position = UDim2.fromOffset(396, 124),
-					Size = UDim2.fromOffset(100, 30),
-					BackgroundColor3 = Theme.Field,
-					BorderSizePixel = 0,
-					Parent = card,
-					ThemeTag = { BackgroundColor3 = "Field" },
-				})
-				Corner(dcFrame, 6)
-				Stroke(dcFrame, Theme.Border)
-				local dcBtn = New("TextButton", {
-					Size = UDim2.fromScale(1, 1),
-					BackgroundTransparency = 1,
-					AutoButtonColor = false,
-					Text = "Discord",
-					TextColor3 = Theme.TextBright,
-					TextSize = Theme.TextSize,
-					Font = Theme.FontMedium,
-					Parent = dcFrame,
-					ThemeTag = { TextColor3 = "TextBright" },
-				})
-				Track(dcBtn.Activated:Connect(function()
-					pcall(function()
-						if setclipboard then setclipboard("https://discord.gg/" .. ks.Discord) end
-					end)
-				end))
-			end
-
-			-- draggable
-			do
-				local dragging, dragStart, startPos = false, nil, nil
-				local targetPosition = card.Position
-				local activeInput = nil
-				Track(card.InputBegan:Connect(function(input)
-					if input.UserInputType ~= Enum.UserInputType.MouseButton1
-						and input.UserInputType ~= Enum.UserInputType.Touch then return end
-					if dragging then return end
-					dragging = true
-					activeInput = input
-					dragStart = input.Position
-					startPos = card.Position
-					input.Changed:Connect(function()
-						if input.UserInputState == Enum.UserInputState.End then
-							dragging = false
-							activeInput = nil
-						end
-					end)
-				end))
-				Track(UserInputService.InputChanged:Connect(function(input)
-					if not dragging then return end
-					if input ~= activeInput and input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-					if input.UserInputType ~= Enum.UserInputType.MouseMovement
-						and input.UserInputType ~= Enum.UserInputType.Touch then return end
-					local delta = input.Position - dragStart
-					card.Position = UDim2.new(
-						startPos.X.Scale, startPos.X.Offset + delta.X,
-						startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-				end))
-			end
-
-						local done = false
-			local function validate()
-				if done then return end
-				local input = box.Text:gsub("%s+", "")
-				if input == "" then return end
-
-				local validKeys = keys
-				if grabFromSite then
-					local fresh = {}
-					for _, url in ipairs(keys) do
-						pcall(function()
-							local res = game:HttpGet(url)
-							if res then
-									for _, line in ipairs(string.split(res, "\n")) do
-									table.insert(fresh, line:gsub("%s+", ""))
-								end
+				if (input.KeyCode.Name == option.key or input.UserInputType.Name == option.key) and not binding then
+					if option.mode == "toggle" then
+						library.flags[option.flag] = not library.flags[option.flag]
+						option.callback(library.flags[option.flag], 0)
+					else
+						library.flags[option.flag] = true
+						if Loop then Loop:Disconnect() option.callback(true, 0) end
+						Loop = library:AddConnection(runService.RenderStepped, function(step)
+							if not inputService:GetFocusedTextBox() then
+								option.callback(nil, step)
 							end
 						end)
 					end
-					if #fresh > 0 then validKeys = fresh end
 				end
+			end
+		end)
 
-				local ok = false
-				for _, k in ipairs(validKeys) do
-					if input == k:gsub("%s+", "") then ok = true break end
-				end
-
-				if ok then
-					done = true
-					if saveKey then
-						pcall(function()
-							if writefile then writefile(fileName, input) end
-						end)
+		library:AddConnection(inputService.InputEnded, function(input)
+			if option.key ~= "none" then
+				if input.KeyCode.Name == option.key or input.UserInputType.Name == option.key then
+					if Loop then
+						Loop:Disconnect()
+						library.flags[option.flag] = false
+						option.callback(true, 0)
 					end
-					gui:Destroy()
-				else
-					errorLabel.Text = "invalid key, try again."
-					errorLabel.Visible = true
 				end
 			end
-
-			Track(btn.Activated:Connect(validate))
-			Track(box.FocusLost:Connect(function(enter) if enter then validate() end end))
-
-			repeat task.wait() until done
-			gui:Destroy()
-		end
-	end
-
-
-	local gui = New("ScreenGui", {
-		Name = RandomName(),
-		ResetOnSpawn = false,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-		AutoLocalize = false,
-		IgnoreGuiInset = true,
-		DisplayOrder = MAX_DISPLAY_ORDER,
-	})
-	ParentGui(gui)
-
-	local main = New("Frame", {
-		Size = UDim2.fromOffset(width, height),
-		Position = opts.Position or UDim2.fromScale(0.5, 0.5),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundColor3 = Theme.Window,
-		BackgroundTransparency = Theme.WindowAlpha,
-		BorderSizePixel = 0,
-		Parent = gui,
-		ThemeTag = { BackgroundColor3 = "Window" },
-	})
-	Corner(main, 10)
-	Stroke(main, Theme.WindowBorder)
-	local scale = New("UIScale", { Parent = main })
-
-	local topBar = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 46),
-		BackgroundColor3 = Theme.TopBar,
-		BorderSizePixel = 0,
-		Parent = main,
-		ThemeTag = { BackgroundColor3 = "TopBar" },
-	})
-	Corner(topBar, 10)
-	New("Frame", {
-		Size = UDim2.new(1, 0, 0, 12),
-		Position = UDim2.new(0, 0, 1, -12),
-		BackgroundColor3 = Theme.TopBar,
-		BorderSizePixel = 0,
-		Parent = topBar,
-		ThemeTag = { BackgroundColor3 = "TopBar" },
-	})
-	local title = New("Frame", {
-		Size = UDim2.new(0, 0, 1, 0),
-		Position = UDim2.fromOffset(16, 0),
-		AutomaticSize = Enum.AutomaticSize.X,
-		BackgroundTransparency = 1,
-		Parent = topBar,
-	})
-	local titleList = List(title, 0, Enum.FillDirection.Horizontal)
-	titleList.VerticalAlignment = Enum.VerticalAlignment.Center
-
-	local titleName = Label(title, opts.Title or "facility", Theme.TextBright, 14, Theme.FontMedium)
-	titleName.Size = UDim2.new(0, 0, 1, 0)
-	titleName.AutomaticSize = Enum.AutomaticSize.X
-
-	local titleSuffix = Label(title, opts.Suffix or ".app", Theme.Accent, 14, Theme.FontMedium)
-	titleSuffix.Size = UDim2.new(0, 0, 1, 0)
-	titleSuffix.AutomaticSize = Enum.AutomaticSize.X
-	titleSuffix.LayoutOrder = 2
-
-	local titleDivider = New("Frame", {
-		Size = UDim2.fromOffset(1, 14),
-		AnchorPoint = Vector2.new(0, 0.5),
-		BackgroundColor3 = Theme.Border,
-		BorderSizePixel = 0,
-		Parent = topBar,
-		ThemeTag = { BackgroundColor3 = "Border" },
-	})
-
-	if opts.SectionTitleStyle == "border" or opts.SectionTitle == "border" then
-		Library.SectionTitleStyle = "border"
-	elseif opts.SectionTitleStyle == "inline" or opts.SectionTitle == "inline" then
-		Library.SectionTitleStyle = "inline"
-	end
-
-	local tabStyle = (opts.TabStyle == "side" or opts.CategoryMod == 2) and "side" or "top"
-	local tabWidth = opts.TabWidth or 140
-	local footerHeight = opts.Footer == false and 0 or 40
-
-	local tabBar
-	local layoutTabs
-
-	if tabStyle == "side" then
-		titleDivider.Visible = false
-
-		tabBar = New("ScrollingFrame", {
-			Size = UDim2.new(0, tabWidth, 1, -(47 + footerHeight + 22)),
-			Position = UDim2.fromOffset(14, 58),
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			ClipsDescendants = true,
-			CanvasSize = UDim2.new(),
-			AutomaticCanvasSize = Enum.AutomaticSize.Y,
-			ScrollingDirection = Enum.ScrollingDirection.Y,
-			ScrollBarThickness = 0,
-			ElasticBehavior = Enum.ElasticBehavior.Never,
-			Parent = main,
-		})
-		List(tabBar, 4)
-
-		layoutTabs = function() end
-	else
-		tabBar = New("ScrollingFrame", {
-			Size = UDim2.new(1, -180, 1, 0),
-			Position = UDim2.fromOffset(0, 0),
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			ClipsDescendants = true,
-			CanvasSize = UDim2.new(),
-			AutomaticCanvasSize = Enum.AutomaticSize.X,
-			ScrollingDirection = Enum.ScrollingDirection.X,
-			ScrollBarThickness = 0,
-			ElasticBehavior = Enum.ElasticBehavior.Never,
-			Parent = topBar,
-		})
-		local tabList = List(tabBar, 18, Enum.FillDirection.Horizontal)
-		tabList.VerticalAlignment = Enum.VerticalAlignment.Center
-
-		layoutTabs = function()
-			local s = math.max(scale.Scale, 0.05)
-			local width = title.AbsoluteSize.X / s
-			titleDivider.Position = UDim2.new(0, 16 + width + 12, 0.5, 0)
-			local x = 16 + width + 25
-			tabBar.Position = UDim2.fromOffset(x, 0)
-			tabBar.Size = UDim2.new(1, -(x + 14), 1, 0)
-		end
-	end
-	Track(title:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutTabs))
-	Track(main:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutTabs))
-	layoutTabs()
-
-	New("Frame", {
-		Size = UDim2.new(1, 0, 0, 1),
-		Position = UDim2.new(0, 0, 0, 46),
-		BackgroundColor3 = Theme.BorderSoft,
-		BorderSizePixel = 0,
-		Parent = main,
-		ThemeTag = { BackgroundColor3 = "BorderSoft" },
-	})
-
-	local shellLeft = tabStyle == "side" and (14 + tabWidth + 10) or 14
-	local shell = New("Frame", {
-		Size = UDim2.new(1, -(14 + shellLeft), 1, -(47 + footerHeight + 22)),
-		Position = UDim2.fromOffset(shellLeft, 58),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Parent = main,
-	})
-	Corner(shell, 8)
-	Stroke(shell, Theme.SectionBorder)
-
-	local body = New("Frame", {
-		Size = UDim2.new(1, -24, 1, -24),
-		Position = UDim2.fromOffset(12, 12),
-		BackgroundTransparency = 1,
-		ClipsDescendants = true,
-		Parent = shell,
-	})
-
-	local footer, footerLine, footerLeft
-	if footerHeight > 0 then
-		footerLine = New("Frame", {
-			Size = UDim2.new(1, 0, 0, 1),
-			Position = UDim2.new(0, 0, 1, -footerHeight),
-			BackgroundColor3 = Theme.BorderSoft,
-			BorderSizePixel = 0,
-			Parent = main,
-			ThemeTag = { BackgroundColor3 = "BorderSoft" },
-		})
-		footer = New("Frame", {
-			Size = UDim2.new(1, -46, 0, footerHeight - 1),
-			Position = UDim2.new(0, 16, 1, -(footerHeight - 1)),
-			BackgroundTransparency = 1,
-			Parent = main,
-		})
-		local fList = List(footer, 16, Enum.FillDirection.Horizontal)
-		fList.HorizontalAlignment = Enum.HorizontalAlignment.Right
-		fList.VerticalAlignment = Enum.VerticalAlignment.Center
-
-		footerLeft = New("Frame", {
-			Size = UDim2.new(0, 0, 0, footerHeight - 1),
-			AutomaticSize = Enum.AutomaticSize.X,
-			Position = UDim2.new(0, 16, 1, -(footerHeight - 1)),
-			BackgroundTransparency = 1,
-			Parent = main,
-		})
-		local lList = List(footerLeft, 10, Enum.FillDirection.Horizontal)
-		lList.VerticalAlignment = Enum.VerticalAlignment.Center
-	end
-
-	local overlay = New("Frame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		ZIndex = 300,
-		Parent = main,
-	})
-	local blocker = New("TextButton", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		AutoButtonColor = false,
-		Text = "",
-		Visible = false,
-		ZIndex = 110,
-		Parent = overlay,
-	})
-
-	local window = setmetatable({
-		Gui = gui,
-		Main = main,
-		TopBar = topBar,
-		TabBar = tabBar,
-		Body = body,
-		Footer = footer,
-		FooterLeft = footerLeft,
-		Overlay = overlay,
-		Blocker = blocker,
-		Scale = scale,
-		TabStyle = tabStyle,
-		TabWidth = tabWidth,
-		BaseScale = 1,
-		FloatStack = {},
-		UserScale = 1,
-		Opacity = 1 - Theme.WindowAlpha,
-		Width = width,
-		Height = height,
-		MinWidth = opts.MinWidth or 460,
-		MinHeight = opts.MinHeight or 320,
-		Tabs = {},
-		Visible = true,
-	}, Window)
-
-	Track(blocker.Activated:Connect(function()
-		window:CloseFloating()
-	end))
-
-	local function fit()
-		local vp = gui.AbsoluteSize
-		if vp.X <= 0 then return end
-		local s = math.clamp(math.min((vp.X - 24) / window.Width, (vp.Y - 24) / window.Height), 0.55, 1)
-			* (window.UserScale or 1)
-		window.BaseScale = s
-		if window.Visible then scale.Scale = s end
-	end
-	window.Refit = fit
-	Track(gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit))
-	fit()
-
-	local dragging, dragStart, startPos = false, nil, nil
-	local activeInput = nil
-	local targetPos = main.Position
-
-	Track(topBar.InputBegan:Connect(function(input)
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1
-			and input.UserInputType ~= Enum.UserInputType.Touch then return end
-		if dragging then return end
-		dragging = true
-		activeInput = input
-		dragStart = input.Position
-		startPos = main.Position
-		targetPos = main.Position
-		window:CloseFloating()
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				dragging = false
-				activeInput = nil
-			end
 		end)
-	end))
 
-	Track(UserInputService.InputChanged:Connect(function(input)
-		if not dragging then return end
-		-- only the finger or cursor that started the drag may move the window
-		if input ~= activeInput and input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-		if input.UserInputType ~= Enum.UserInputType.MouseMovement
-			and input.UserInputType ~= Enum.UserInputType.Touch then return end
-		local delta = input.Position - dragStart
-		main.Position = UDim2.new(
-			startPos.X.Scale, startPos.X.Offset + delta.X,
-			startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-	end))
-
-	local grip = New("TextButton", {
-		Size = UDim2.fromOffset(16, 16),
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, -4, 1, -4),
-		BackgroundTransparency = 1,
-		AutoButtonColor = false,
-		Text = "",
-		ClipsDescendants = true,
-		ZIndex = 130,
-		Parent = main,
-	})
-	local gripBars = {}
-	for i, d in ipairs({ 3, 7, 11 }) do
-		local bar = New("Frame", {
-			Size = UDim2.fromOffset(d * 2, 2),
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromOffset(16 - d, 16 - d),
-			Rotation = -45,
-			BackgroundColor3 = Theme.Border,
-			BorderSizePixel = 0,
-			ZIndex = 130,
-			Parent = grip,
-			ThemeTag = { BackgroundColor3 = "Border" },
-		})
-		Corner(bar, 1)
-		gripBars[i] = bar
-	end
-	Track(grip.MouseEnter:Connect(function()
-		for _, bar in ipairs(gripBars) do Tween(bar, { BackgroundColor3 = Theme.Accent }, EASE_FAST) end
-	end))
-	Track(grip.MouseLeave:Connect(function()
-		if window.Resizing then return end
-		for _, bar in ipairs(gripBars) do Tween(bar, { BackgroundColor3 = Theme.Border }, EASE_FAST) end
-	end))
-
-	local resizeMove, resizeEnd
-	Track(grip.InputBegan:Connect(function(input)
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1
-			and input.UserInputType ~= Enum.UserInputType.Touch then return end
-		window.Resizing = true
-		window:CloseFloating()
-		local origin = input.Position
-		local startW, startH = window.Width, window.Height
-		local startPos = main.Position
-		resizeMove = UserInputService.InputChanged:Connect(function(move)
-			if not window.Resizing then return end
-			if move.UserInputType ~= Enum.UserInputType.MouseMovement
-				and move.UserInputType ~= Enum.UserInputType.Touch then return end
-			local s = math.max(scale.Scale, 0.05)
-			local vp = gui.AbsoluteSize
-			local delta = move.Position - origin
-			local w = math.clamp(startW + delta.X / s, window.MinWidth, math.max(window.MinWidth, vp.X - 24))
-			local h = math.clamp(startH + delta.Y / s, window.MinHeight, math.max(window.MinHeight, vp.Y - 24))
-			window:SetSize(w, h)
-			main.Position = UDim2.new(
-				startPos.X.Scale, startPos.X.Offset + (w - startW) * 0.5,
-				startPos.Y.Scale, startPos.Y.Offset + (h - startH) * 0.5)
-		end)
-		resizeEnd = UserInputService.InputEnded:Connect(function(ended)
-			if ended.UserInputType ~= input.UserInputType then return end
-			window.Resizing = false
-			for _, bar in ipairs(gripBars) do Tween(bar, { BackgroundColor3 = Theme.Border }, EASE_FAST) end
-			if resizeMove then resizeMove:Disconnect() resizeMove = nil end
-			if resizeEnd then resizeEnd:Disconnect() resizeEnd = nil end
-		end)
-	end))
-
-	if opts.Cursor then
-		Library:SetCursor(true, type(opts.Cursor) == "table" and opts.Cursor or nil)
-	end
-
-	if opts.MobileButton == true or (opts.MobileButton ~= false and UserInputService.TouchEnabled) then
-		Library:CreateMobileButton(opts.MobileButtonOptions)
-	end
-
-	table.insert(Library.Windows, window)
-	return window
-end
-
-function Library:Notify(opts, text, duration)
-	if self.NotificationsEnabled == false then return end
-	if type(opts) == "string" then
-		opts = { Title = opts, Text = text, Duration = duration }
-	end
-	opts = opts or {}
-	opts.Text = opts.Text or opts.Content or opts.Description
-	local styled = opts.Color ~= nil or (type(opts.Style) == "string" and string.lower(opts.Style) ~= "normal")
-	local accent = opts.Color or StyleColor(opts.Style, Theme.Accent)
-	local iconName = opts.Icon
-	if iconName == nil and type(opts.Style) == "string" then
-		local key = string.lower(opts.Style)
-		if key == "warning" or key == "warn" or key == "yellow" then
-			iconName = "alert-triangle"
-		elseif key == "danger" or key == "error" or key == "red" then
-			iconName = "x-circle"
-		elseif key == "success" or key == "green" then
-			iconName = "check-circle"
-		end
-	end
-	if not self.NotifyGui then
-		local gui = New("ScreenGui", {
-			Name = RandomName(),
-			ResetOnSpawn = false,
-			IgnoreGuiInset = true,
-			ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-		AutoLocalize = false,
-			DisplayOrder = MAX_DISPLAY_ORDER,
-		})
-		ParentGui(gui)
-		local holder = New("Frame", {
-			Size = UDim2.fromOffset(260, 400),
-			AnchorPoint = Vector2.new(1, 1),
-			Position = UDim2.new(1, -18, 1, -18),
-			BackgroundTransparency = 1,
-			Parent = gui,
-		})
-		local l = List(holder, 8)
-		l.VerticalAlignment = Enum.VerticalAlignment.Bottom
-		l.HorizontalAlignment = Enum.HorizontalAlignment.Right
-		self.NotifyGui = gui
-		self.NotifyHolder = holder
-	end
-
-	local limit = self.NotificationLimit or 5
-	local live = {}
-	for _, child in ipairs(self.NotifyHolder:GetChildren()) do
-		if child:IsA("Frame") then table.insert(live, child) end
-	end
-	for index = 1, #live - (limit - 1) do
-		pcall(function() live[index]:Destroy() end)
-	end
-
-	local card = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = Theme.Section,
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Parent = self.NotifyHolder,
-		ThemeTag = { BackgroundColor3 = "Section" },
-	})
-	Corner(card, 6)
-	local cStroke = Stroke(card, Theme.SectionBorder, 1, 1)
-	local bar = New("Frame", {
-		Size = UDim2.new(0, 12, 1, 0),
-		Position = UDim2.fromOffset(0, 0),
-		BackgroundColor3 = accent,
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Parent = card,
-	})
-	Corner(bar, 6)
-	local barCover = New("Frame", {
-		Size = UDim2.new(0, 9, 1, 0),
-		Position = UDim2.fromOffset(3, 0),
-		BackgroundColor3 = Theme.Section,
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Parent = card,
-		ThemeTag = { BackgroundColor3 = "Section" },
-	})
-	local inner = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = card,
-	})
-	Pad(inner, 10, 12, 10, 14)
-	List(inner, 3)
-
-	local headRow = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 16),
-		BackgroundTransparency = 1,
-		Parent = inner,
-	})
-	local icon = AttachIcon(headRow, iconName, accent, 14)
-	if icon then icon.ImageTransparency = 1 end
-	local inset = icon and 19 or 0
-	local head = Label(headRow, opts.Title or "notice", styled and accent or Theme.TextBright, 13, Theme.FontMedium)
-	head.Position = UDim2.fromOffset(inset, 0)
-	head.Size = UDim2.new(1, -inset, 1, 0)
-	head.TextTransparency = 1
-	local text
-	if opts.Text then
-		text = Label(inner, opts.Text, Theme.Text, 12)
-		text.Size = UDim2.new(1, 0, 0, 0)
-		text.AutomaticSize = Enum.AutomaticSize.Y
-		text.TextWrapped = true
-		text.LayoutOrder = 2
-		text.TextTransparency = 1
-	end
-
-	card.Position = UDim2.new(1, 0, 0, 0)
-	card.BackgroundTransparency = 0
-	Tween(card, { Position = UDim2.fromOffset(0, 0) })
-	Tween(cStroke, { Transparency = 0 })
-	Tween(bar, { BackgroundTransparency = 0 })
-	Tween(barCover, { BackgroundTransparency = 0 })
-	Tween(head, { TextTransparency = 0 })
-	if icon then Tween(icon, { ImageTransparency = 0 }) end
-	if text then Tween(text, { TextTransparency = 0 }) end
-
-	task.delay(opts.Duration or 3.5, function()
-		if not card.Parent then return end
-		Tween(card, { BackgroundTransparency = 1, Position = UDim2.fromOffset(20, 0) })
-		Tween(cStroke, { Transparency = 1 })
-		Tween(bar, { BackgroundTransparency = 1 })
-		Tween(barCover, { BackgroundTransparency = 1 })
-		Tween(head, { TextTransparency = 1 })
-		if icon then Tween(icon, { ImageTransparency = 1 }) end
-		if text then Tween(text, { TextTransparency = 1 }) end
-		Tween(card, { Position = UDim2.new(0, 20, 0, 0) })
-		task.wait(0.22)
-		card:Destroy()
-	end)
-end
-
-local MOUSE_KEYS = {
-	MB1 = Enum.UserInputType.MouseButton1,
-	MB2 = Enum.UserInputType.MouseButton2,
-	MB3 = Enum.UserInputType.MouseButton3,
-}
-
-function Library:SetToggleKey(key)
-	self.ToggleKey = nil
-	self.ToggleInput = nil
-	if typeof(key) == "EnumItem" then
-		if key.EnumType == Enum.UserInputType then
-			self.ToggleInput = key
-		else
-			self.ToggleKey = key
-		end
-	elseif type(key) == "string" then
-		if MOUSE_KEYS[key] then
-			self.ToggleInput = MOUSE_KEYS[key]
-		else
-			local ok, code = pcall(function() return Enum.KeyCode[key] end)
-			self.ToggleKey = ok and code or nil
-		end
-	end
-	return self.ToggleKey or self.ToggleInput
-end
-
-Library.Panels = {}
-
-function Library:Panel(opts)
-	opts = opts or {}
-
-	local gui = New("ScreenGui", {
-		Name = RandomName(),
-		ResetOnSpawn = false,
-		IgnoreGuiInset = true,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-		AutoLocalize = false,
-		DisplayOrder = opts.DisplayOrder or 997,
-	})
-	ParentGui(gui)
-
-	gui.Name = RandomName()
-	gui.DisplayOrder = MAX_DISPLAY_ORDER
-	local root = New("Frame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Parent = gui,
-	})
-	local rootScale = New("UIScale", { Parent = root })
-
-	local frame = New("Frame", {
-		Size = opts.Height
-			and UDim2.fromOffset(opts.Width or 180, opts.Height)
-			or UDim2.new(0, opts.Width or 180, 0, 0),
-		AutomaticSize = (not opts.Height) and Enum.AutomaticSize.Y or Enum.AutomaticSize.None,
-		Position = opts.Position or UDim2.fromOffset(18, 90),
-		BackgroundColor3 = Theme.Section,
-		BorderSizePixel = 0,
-		Active = true,
-		Parent = root,
-		ThemeTag = { BackgroundColor3 = "Section" },
-	})
-	Corner(frame, 8)
-	Stroke(frame, Theme.SectionBorder)
-
-	local stack = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = frame,
-	})
-	List(stack, 0)
-
-	local headerChevron, headerTitle, headerButton
-	if opts.Title then
-		local header = New("Frame", {
-			Size = UDim2.new(1, 0, 0, 32),
-			BackgroundTransparency = 1,
-			Parent = stack,
-		})
-		Pad(header, 0, 11, 0, 11)
-
-		local icon = AttachIcon(header, opts.Icon, Theme.TextBright, 14)
-		if icon then
-			icon.AnchorPoint = Vector2.new(0, 0.5)
-			icon.Position = UDim2.new(0, 0, 0.5, 0)
-		end
-		local inset = icon and 20 or 0
-		headerTitle = Label(header, opts.Title, Theme.TextBright, Theme.TextSize, Theme.FontMedium)
-		headerTitle.Position = UDim2.fromOffset(inset, 0)
-		headerTitle.Size = UDim2.new(1, -inset - 16, 1, 0)
-
-		headerChevron = Chevron(header, Theme.TextDim)
-		headerChevron.AnchorPoint = Vector2.new(1, 0.5)
-		headerChevron.Position = UDim2.new(1, 0, 0.5, 0)
-
-		headerButton = New("TextButton", {
-			Size = UDim2.fromOffset(26, 26),
-			AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, 6, 0.5, 0),
-			BackgroundTransparency = 1,
-			AutoButtonColor = false,
-			Text = "",
-			ZIndex = 2,
-			Parent = header,
-		})
-
-		New("Frame", {
-			Size = UDim2.new(1, 0, 0, 1),
-			BackgroundColor3 = Theme.BorderSoft,
-			BorderSizePixel = 0,
-			LayoutOrder = 2,
-			Parent = stack,
-			ThemeTag = { BackgroundColor3 = "BorderSoft" },
-		})
-	end
-
-	local body = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		ClipsDescendants = true,
-		LayoutOrder = 3,
-		Parent = stack,
-	})
-	Pad(body, opts.Title and 9 or 11, 11, 11, 11)
-	List(body, 8)
-
-	local overlay = New("Frame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		ZIndex = 300,
-		Parent = root,
-	})
-	local blocker = New("TextButton", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		AutoButtonColor = false,
-		Text = "",
-		Visible = false,
-		ZIndex = 310,
-		Parent = overlay,
-	})
-
-	-- Window methods are reused so dropdowns, colour pickers and gear popups
-	-- open inside the panel instead of the main window overlay.
-	local api = setmetatable({
-		Gui = gui,
-		Frame = frame,
-		Main = root,
-		Scale = rootScale,
-		Overlay = overlay,
-		Blocker = blocker,
-		FloatStack = {},
-		Modals = {},
-	}, { __index = Window })
-
-	api.Content = NewContainer(api, body)
-	api.Open = true
-
-	function api:SetOpen(state)
-		state = state ~= false
-		if state == self.Open then return end
-		self.Open = state
-		self:CloseFloating()
-
-		if state then
-			body.Visible = true
-			body.Size = UDim2.new(1, 0, 0, 0)
-			local target = body.AbsoluteSize.Y
-			body.AutomaticSize = Enum.AutomaticSize.Y
-			target = body.AbsoluteSize.Y
-			body.AutomaticSize = Enum.AutomaticSize.None
-			body.Size = UDim2.new(1, 0, 0, 0)
-			Tween(body, { Size = UDim2.new(1, 0, 0, target) }).Completed:Once(function()
-				if self.Open then body.AutomaticSize = Enum.AutomaticSize.Y end
-			end)
-		else
-			local current = body.AbsoluteSize.Y
-			body.AutomaticSize = Enum.AutomaticSize.None
-			body.Size = UDim2.new(1, 0, 0, current)
-			Tween(body, { Size = UDim2.new(1, 0, 0, 0) }).Completed:Once(function()
-				if not self.Open then body.Visible = false end
-			end)
-		end
-
-		if headerChevron then
-			Tween(headerChevron, { Rotation = state and 0 or 180 }, EASE_FAST)
-		end
-		return self
-	end
-
-	function api:Toggle()
-		return self:SetOpen(not self.Open)
-	end
-
-	if headerButton then
-		Track(headerButton.Activated:Connect(function()
-			api:Toggle()
-		end))
-		Track(headerButton.MouseEnter:Connect(function()
-			for _, bar in ipairs(headerChevron:GetChildren()) do
-				if bar:IsA("Frame") then
-					Tween(bar, { BackgroundColor3 = Theme.AccentSoft }, EASE_FAST)
+		function option:SetKey(key)
+			binding = false
+			bindinput.TextColor3 = Color3.fromRGB(160, 160, 160)
+			if Loop then Loop:Disconnect() library.flags[option.flag] = false option.callback(true, 0) end
+			self.key = (key and key.Name) or key or self.key
+			if self.key == "Backspace" then
+				self.key = "none"
+				bindinput.Text = "[NONE]"
+			else
+				local a = self.key
+				if self.key:match"Mouse" then
+					a = self.key:gsub("Button", ""):gsub("Mouse", "M")
+				elseif self.key:match"Shift" or self.key:match"Alt" or self.key:match"Control" then
+					a = self.key:gsub("Left", "L"):gsub("Right", "R")
 				end
+				bindinput.Text = "[" .. a:gsub("Control", "CTRL"):upper() .. "]"
 			end
-		end))
-		Track(headerButton.MouseLeave:Connect(function()
-			for _, bar in ipairs(headerChevron:GetChildren()) do
-				if bar:IsA("Frame") then
-					Tween(bar, { BackgroundColor3 = Theme.TextDim }, EASE_FAST)
-				end
-			end
-		end))
-	end
-
-	Track(blocker.Activated:Connect(function()
-		api:CloseFloating()
-	end))
-
-	function api:SetVisible(state)
-		if not state then self:CloseFloating() end
-		gui.Enabled = state and true or false
-	end
-
-	function api:SetPosition(position)
-		frame.Position = position
-	end
-
-	function api:Destroy()
-		self:CloseFloating()
-		gui:Destroy()
-		for index, panel in ipairs(Library.Panels) do
-			if panel == api then table.remove(Library.Panels, index) break end
+			bindinput.Size = UDim2.new(0, -textService:GetTextSize(bindinput.Text, 16, Enum.Font.Code, Vector2.new(9e9, 9e9)).X, 0, 16)
 		end
+		option:SetKey()
 	end
 
-	if opts.Draggable ~= false then
-		local origin, startPos, moveConn, endConn
-		Track(frame.InputBegan:Connect(function(input)
-			if input.UserInputType ~= Enum.UserInputType.MouseButton1
-				and input.UserInputType ~= Enum.UserInputType.Touch then return end
-			origin = input.Position
-			startPos = frame.Position
-			moveConn = UserInputService.InputChanged:Connect(function(move)
-				if move.UserInputType ~= Enum.UserInputType.MouseMovement
-					and move.UserInputType ~= Enum.UserInputType.Touch then return end
-				local delta = move.Position - origin
-				frame.Position = UDim2.new(
-					startPos.X.Scale, startPos.X.Offset + delta.X,
-					startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-			end)
-			endConn = UserInputService.InputEnded:Connect(function(ended)
-				if ended.UserInputType ~= input.UserInputType then return end
-				if moveConn then moveConn:Disconnect() moveConn = nil end
-				if endConn then endConn:Disconnect() endConn = nil end
-			end)
-		end))
-	end
+	library.createSlider = function(option, parent)
+		option.hasInit = true
 
-	if opts.Visible == false then api:SetVisible(false) end
-	if opts.Collapsed then api:SetOpen(false) end
-
-	table.insert(self.Panels, api)
-	return api
-end
-
-Library.HotkeyEntries = {}
-Library.HotkeysEnabled = false
-
-function Library:RegisterHotkey(getter)
-	table.insert(self.HotkeyEntries, getter)
-	self:RefreshHotkeys()
-	return getter
-end
-
-function Library:CreateHotkeyPanel(opts)
-	if self.HotkeyGui then return self.HotkeyPanel end
-	opts = opts or {}
-
-	local gui = New("ScreenGui", {
-		Name = RandomName(),
-		ResetOnSpawn = false,
-		IgnoreGuiInset = true,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-		AutoLocalize = false,
-		DisplayOrder = MAX_DISPLAY_ORDER,
-		Enabled = false,
-	})
-	ParentGui(gui)
-
-	local panel = New("Frame", {
-		Size = UDim2.fromOffset(opts.Width or 180, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		Position = opts.Position or UDim2.fromOffset(18, 90),
-		BackgroundColor3 = Theme.Section,
-		BorderSizePixel = 0,
-		Active = true,
-		Parent = gui,
-		ThemeTag = { BackgroundColor3 = "Section" },
-	})
-	Corner(panel, 8)
-	Stroke(panel, Theme.SectionBorder)
-	local inner = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = panel,
-	})
-	List(inner, 0)
-
-	local header = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 32),
-		BackgroundTransparency = 1,
-		Parent = inner,
-	})
-	Pad(header, 0, 11, 0, 11)
-	local icon = AttachIcon(header, opts.Icon or "keyboard", Theme.TextBright, 14)
-	local inset = icon and 20 or 0
-	if icon then
-		icon.AnchorPoint = Vector2.new(0, 0.5)
-		icon.Position = UDim2.new(0, 0, 0.5, 0)
-	end
-	local title = Label(header, opts.Title or "hotkeys", Theme.TextBright, Theme.TextSize, Theme.FontMedium)
-	title.Position = UDim2.fromOffset(inset, 0)
-	title.Size = UDim2.new(1, -inset, 1, 0)
-
-	New("Frame", {
-		Size = UDim2.new(1, 0, 0, 1),
-		BackgroundColor3 = Theme.BorderSoft,
-		BorderSizePixel = 0,
-		LayoutOrder = 2,
-		Parent = inner,
-		ThemeTag = { BackgroundColor3 = "BorderSoft" },
-	})
-
-	local body = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		LayoutOrder = 3,
-		Parent = inner,
-	})
-	Pad(body, 8, 11, 9, 11)
-
-	local rows = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		Parent = body,
-	})
-	List(rows, 4)
-
-	local origin, startPos, moveConn, endConn
-	Track(panel.InputBegan:Connect(function(input)
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1
-			and input.UserInputType ~= Enum.UserInputType.Touch then return end
-		origin = input.Position
-		startPos = panel.Position
-		moveConn = UserInputService.InputChanged:Connect(function(move)
-			if move.UserInputType ~= Enum.UserInputType.MouseMovement
-				and move.UserInputType ~= Enum.UserInputType.Touch then return end
-			local delta = move.Position - origin
-			panel.Position = UDim2.new(
-				startPos.X.Scale, startPos.X.Offset + delta.X,
-				startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-		end)
-		endConn = UserInputService.InputEnded:Connect(function(ended)
-			if ended.UserInputType ~= input.UserInputType then return end
-			if moveConn then moveConn:Disconnect() moveConn = nil end
-			if endConn then endConn:Disconnect() endConn = nil end
-		end)
-	end))
-
-	self.HotkeyGui = gui
-	self.HotkeyPanel = panel
-	self.HotkeyRows = rows
-	return panel
-end
-
-function Library:RefreshHotkeys()
-	if not self.HotkeyGui or not self.HotkeysEnabled then return end
-
-	local rows = self.HotkeyRows
-	for _, child in ipairs(rows:GetChildren()) do
-		if child:IsA("Frame") then child:Destroy() end
-	end
-
-	local shown = 0
-	for index = #self.HotkeyEntries, 1, -1 do
-		local ok, data = pcall(self.HotkeyEntries[index])
-		if not ok then
-			table.remove(self.HotkeyEntries, index)
-		elseif type(data) == "table" and data.Visible and data.Key and data.Key ~= "" then
-			shown = shown + 1
-			local color = data.Active and Theme.Accent or Theme.TextDim
-
-			local row = New("Frame", {
-				Size = UDim2.new(1, 0, 0, 16),
+		if option.sub then
+			option.main = option:getMain()
+			option.main.Size = UDim2.new(1, 0, 0, 42)
+		else
+			option.main = library:Create("Frame", {
+				LayoutOrder = option.position,
+				Size = UDim2.new(1, 0, 0, option.textpos and 24 or 40),
 				BackgroundTransparency = 1,
-				LayoutOrder = shown,
-				Parent = rows,
+				Parent = parent
+			})
+		end
+
+		option.slider = library:Create("Frame", {
+			Position = UDim2.new(0, 6, 0, (option.sub and 22 or option.textpos and 4 or 20)),
+			Size = UDim2.new(1, -12, 0, 16),
+			BackgroundColor3 = Color3.fromRGB(50, 50, 50),
+			BorderColor3 = Color3.new(),
+			Parent = option.main
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2454009026",
+			ImageColor3 = Color3.new(),
+			ImageTransparency = 0.8,
+			Parent = option.slider
+		})
+
+		option.fill = library:Create("Frame", {
+			BackgroundColor3 = library.flags["Menu Accent Color"],
+			BorderSizePixel = 0,
+			Parent = option.slider
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.fromRGB(60, 60, 60),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.slider
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, -2, 1, -2),
+			Position = UDim2.new(0, 1, 0, 1),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.new(),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.slider
+		})
+
+		option.title = library:Create("TextBox", {
+			Position = UDim2.new((option.sub or option.textpos) and 0.5 or 0, (option.sub or option.textpos) and 0 or 6, 0, 0),
+			Size = UDim2.new(0, 0, 0, (option.sub or option.textpos) and 14 or 18),
+			BackgroundTransparency = 1,
+			Text = (option.text == "nil" and "" or option.text .. ": ") .. option.value .. option.suffix,
+			TextSize = (option.sub or option.textpos) and 14 or 15,
+			Font = Enum.Font.Code,
+			TextColor3 = Color3.fromRGB(210, 210, 210),
+			TextXAlignment = Enum.TextXAlignment[(option.sub or option.textpos) and "Center" or "Left"],
+			Parent = (option.sub or option.textpos) and option.slider or option.main
+		})
+		table.insert(library.theme, option.fill)
+
+		library:Create("UIGradient", {
+			Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(115, 115, 115)),
+				ColorSequenceKeypoint.new(1, Color3.new(1, 1, 1)),
+			}),
+			Rotation = -90,
+			Parent = option.fill
+		})
+
+		if option.min >= 0 then
+			option.fill.Size = UDim2.new((option.value - option.min) / (option.max - option.min), 0, 1, 0)
+		else
+			option.fill.Position = UDim2.new((0 - option.min) / (option.max - option.min), 0, 0, 0)
+			option.fill.Size = UDim2.new(option.value / (option.max - option.min), 0, 1, 0)
+		end
+
+		local manualInput
+		option.title.Focused:connect(function()
+			if not manualInput then
+				option.title:ReleaseFocus()
+				option.title.Text = (option.text == "nil" and "" or option.text .. ": ") .. option.value .. option.suffix
+			end
+		end)
+
+		option.title.FocusLost:connect(function()
+			option.slider.BorderColor3 = Color3.new()
+			if manualInput then
+				if tonumber(option.title.Text) then
+					option:SetValue(tonumber(option.title.Text))
+				else
+					option.title.Text = (option.text == "nil" and "" or option.text .. ": ") .. option.value .. option.suffix
+				end
+			end
+			manualInput = false
+		end)
+
+		local interest = (option.sub or option.textpos) and option.slider or option.main
+		interest.InputBegan:connect(function(input)
+			if input.UserInputType.Name == "MouseButton1" then
+				if inputService:IsKeyDown(Enum.KeyCode.LeftControl) or inputService:IsKeyDown(Enum.KeyCode.RightControl) then
+					manualInput = true
+					option.title:CaptureFocus()
+				else
+					library.slider = option
+					option.slider.BorderColor3 = library.flags["Menu Accent Color"]
+					option:SetValue(option.min + ((input.Position.X - option.slider.AbsolutePosition.X) / option.slider.AbsoluteSize.X) * (option.max - option.min))
+				end
+			end
+			if input.UserInputType.Name == "MouseMovement" then
+				if not library.warning and not library.slider then
+					option.slider.BorderColor3 = library.flags["Menu Accent Color"]
+				end
+				if option.tip then
+					library.tooltip.Text = option.tip
+					library.tooltip.Size = UDim2.new(0, textService:GetTextSize(option.tip, 15, Enum.Font.Code, Vector2.new(9e9, 9e9)).X, 0, 20)
+				end
+			end
+		end)
+
+		interest.InputChanged:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				if option.tip then
+					library.tooltip.Position = UDim2.new(0, input.Position.X + 26, 0, input.Position.Y + 36)
+				end
+			end
+		end)
+
+		interest.InputEnded:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				library.tooltip.Position = UDim2.new(2)
+				if option ~= library.slider then
+					option.slider.BorderColor3 = Color3.new()
+					--option.fill.BorderColor3 = Color3.new()
+				end
+			end
+		end)
+
+		function option:SetValue(value, nocallback)
+			if typeof(value) ~= "number" then value = 0 end
+			value = library.round(value, option.float)
+			value = math.clamp(value, self.min, self.max)
+			if self.min >= 0 then
+				option.fill:TweenSize(UDim2.new((value - self.min) / (self.max - self.min), 0, 1, 0), "Out", "Quad", 0.05, true)
+			else
+				option.fill:TweenPosition(UDim2.new((0 - self.min) / (self.max - self.min), 0, 0, 0), "Out", "Quad", 0.05, true)
+				option.fill:TweenSize(UDim2.new(value / (self.max - self.min), 0, 1, 0), "Out", "Quad", 0.1, true)
+			end
+			library.flags[self.flag] = value
+			self.value = value
+			option.title.Text = (option.text == "nil" and "" or option.text .. ": ") .. option.value .. option.suffix
+			if not nocallback then
+				self.callback(value)
+			end
+		end
+		delay(1, function()
+			if library then
+				option:SetValue(option.value)
+			end
+		end)
+	end
+
+	library.createList = function(option, parent)
+		option.hasInit = true
+
+		if option.sub then
+			option.main = option:getMain()
+			option.main.Size = UDim2.new(1, 0, 0, 48)
+		else
+			option.main = library:Create("Frame", {
+				LayoutOrder = option.position,
+				Size = UDim2.new(1, 0, 0, option.text == "nil" and 30 or 48),
+				BackgroundTransparency = 1,
+				Parent = parent
 			})
 
-			local label = Label(row, data.Label or "action", color, Theme.TextSize - 1)
-			label.Size = UDim2.new(1, -52, 1, 0)
-			label.TextTruncate = Enum.TextTruncate.AtEnd
-
-			local key = Label(row, data.Key, color, Theme.TextSize - 1)
-			key.AnchorPoint = Vector2.new(1, 0)
-			key.Position = UDim2.fromScale(1, 0)
-			key.Size = UDim2.fromOffset(50, 16)
-			key.TextXAlignment = Enum.TextXAlignment.Right
+			if option.text ~= "nil" then
+				library:Create("TextLabel", {
+					Position = UDim2.new(0, 6, 0, 0),
+					Size = UDim2.new(1, -12, 0, 18),
+					BackgroundTransparency = 1,
+					Text = option.text,
+					TextSize = 15,
+					Font = Enum.Font.Code,
+					TextColor3 = Color3.fromRGB(210, 210, 210),
+					TextXAlignment = Enum.TextXAlignment.Left,
+					Parent = option.main
+				})
+			end
 		end
-	end
 
-	self.HotkeyPanel.Visible = shown > 0
-end
+		local function getMultiText()
+			local s = ""
+			for _, value in next, option.values do
+				s = s .. (option.value[value] and (tostring(value) .. ", ") or "")
+			end
+			return string.sub(s, 1, #s - 2)
+		end
 
-function Library:SetHotkeysVisible(state)
-	self.HotkeysEnabled = state and true or false
-	if self.HotkeysEnabled then self:CreateHotkeyPanel() end
-	if self.HotkeyGui then self.HotkeyGui.Enabled = self.HotkeysEnabled end
-	self:RefreshHotkeys()
-	return self.HotkeysEnabled
-end
-
-Library.CursorEnabled = false
-
-function Library:CreateCursor(opts)
-	if self.CursorGui then return self.CursorGui end
-	opts = opts or {}
-
-	local length = opts.Length or 9
-	local thickness = opts.Thickness or 2
-	local gap = opts.Gap or 4
-
-	local gui = New("ScreenGui", {
-		Name = RandomName(),
-		ResetOnSpawn = false,
-		IgnoreGuiInset = true,
-		AutoLocalize = false,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-		DisplayOrder = MAX_DISPLAY_ORDER,
-		Enabled = false,
-	})
-	ParentGui(gui)
-
-	local holder = New("Frame", {
-		Size = UDim2.fromOffset(1, 1),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundTransparency = 1,
-		Parent = gui,
-	})
-
-	local function bar(anchor, position, size)
-		local piece = New("Frame", {
-			Size = size,
-			AnchorPoint = anchor,
-			Position = position,
-			BackgroundColor3 = opts.Color or Theme.Accent,
-			BorderSizePixel = 0,
-			Parent = holder,
+		option.listvalue = library:Create("TextLabel", {
+			Position = UDim2.new(0, 6, 0, (option.text == "nil" and not option.sub) and 4 or 22),
+			Size = UDim2.new(1, -12, 0, 22),
+			BackgroundColor3 = Color3.fromRGB(50, 50, 50),
+			BorderColor3 = Color3.new(),
+			Text = " " .. (typeof(option.value) == "string" and option.value or getMultiText()),
+			TextSize = 15,
+			Font = Enum.Font.Code,
+			TextColor3 = Color3.new(1, 1, 1),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Parent = option.main
 		})
-		Corner(piece, 1)
-		return piece
-	end
 
-	bar(Vector2.new(1, 0.5), UDim2.new(0.5, -gap, 0.5, 0), UDim2.fromOffset(length, thickness))
-	bar(Vector2.new(0, 0.5), UDim2.new(0.5, gap, 0.5, 0), UDim2.fromOffset(length, thickness))
-	bar(Vector2.new(0.5, 1), UDim2.new(0.5, 0, 0.5, -gap), UDim2.fromOffset(thickness, length))
-	bar(Vector2.new(0.5, 0), UDim2.new(0.5, 0, 0.5, gap), UDim2.fromOffset(thickness, length))
-
-	if opts.Dot ~= false then
-		bar(Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5), UDim2.fromOffset(thickness, thickness))
-	end
-
-	local function follow()
-		if not gui.Enabled then return end
-		local position = UserInputService:GetMouseLocation()
-		if not gui.IgnoreGuiInset then
-			position = position - GuiService:GetGuiInset()
-		end
-		holder.Position = UDim2.fromOffset(position.X, position.Y)
-	end
-
-	Track(UserInputService.InputChanged:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseMovement
-			or input.UserInputType == Enum.UserInputType.Touch then
-			follow()
-		end
-	end))
-
-	local bindName = "FacilityCursor_" .. RandomName(6)
-	pcall(function()
-		RunService:BindToRenderStep(bindName, Enum.RenderPriority.Last.Value, follow)
-	end)
-	self.CursorBind = bindName
-
-	self.CursorGui = gui
-	self.CursorHolder = holder
-	return gui
-end
-
-function Library:RefreshCursor()
-	if not self.CursorGui then return end
-	self.CursorGui.Enabled = self.CursorEnabled and self.Open
-end
-
-function Library:SetCursor(state, opts)
-	self.CursorEnabled = state and true or false
-	if self.CursorEnabled then self:CreateCursor(opts) end
-	self:RefreshCursor()
-	return self.CursorEnabled
-end
-
-function Library:ServerBrowser(opts)
-	if self.ServerBrowserApi then return self.ServerBrowserApi end
-	opts = opts or {}
-
-	local HttpService = game:GetService("HttpService")
-	local TeleportService = game:GetService("TeleportService")
-	local player = Players.LocalPlayer
-	local placeId = opts.PlaceId or game.PlaceId
-
-	local gui = New("ScreenGui", {
-		Name = RandomName(),
-		ResetOnSpawn = false,
-		IgnoreGuiInset = true,
-		AutoLocalize = false,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-		DisplayOrder = MAX_DISPLAY_ORDER - 2,
-		Enabled = false,
-	})
-	ParentGui(gui)
-
-	local main = New("Frame", {
-		Size = UDim2.fromOffset(opts.Width or 340, opts.Height or 420),
-		Position = opts.Position or UDim2.new(0.5, -170, 0.5, -210),
-		BackgroundColor3 = Theme.Window,
-		BorderSizePixel = 0,
-		Active = true,
-		Parent = gui,
-		ThemeTag = { BackgroundColor3 = "Window" },
-	})
-	Corner(main, 10)
-	Stroke(main, Theme.WindowBorder)
-
-	local shadowHolder = New("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Size = UDim2.new(1, 35, 1.096, 35),
-		Position = UDim2.fromScale(0.5, 0.5),
-		BackgroundTransparency = 1,
-		Parent = main,
-	})
-	New("ImageLabel", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundTransparency = 1,
-		ZIndex = 0,
-		Image = "rbxassetid://5587865193",
-		ImageColor3 = Color3.fromRGB(20, 20, 20),
-		Size = UDim2.new(1.6, 0, 1.3, 0),
-		Position = UDim2.fromScale(0.5, 0.5),
-		ImageTransparency = 0.5,
-		Parent = shadowHolder,
-	})
-
-	-- header
-	local topBar = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 40),
-		BackgroundColor3 = Theme.TopBar,
-		BorderSizePixel = 0,
-		Parent = main,
-		ThemeTag = { BackgroundColor3 = "TopBar" },
-	})
-	Corner(topBar, 10)
-	New("Frame", {
-		Size = UDim2.new(1, 0, 0, 12),
-		Position = UDim2.fromOffset(0, 28),
-		BackgroundColor3 = Theme.TopBar,
-		BorderSizePixel = 0,
-		Parent = topBar,
-		ThemeTag = { BackgroundColor3 = "TopBar" },
-	})
-	New("Frame", {
-		Size = UDim2.new(1, 0, 0, 1),
-		Position = UDim2.fromOffset(0, 39),
-		BackgroundColor3 = Theme.BorderSoft,
-		BorderSizePixel = 0,
-		Parent = topBar,
-		ThemeTag = { BackgroundColor3 = "BorderSoft" },
-	})
-
-	local heading = Label(topBar, opts.Title or "servers", Theme.TextBright, Theme.TextSize + 1, Theme.FontMedium)
-	heading.Position = UDim2.fromOffset(14, 0)
-	heading.Size = UDim2.new(1, -90, 1, 0)
-
-	local statusLabel = Label(topBar, "", Theme.TextDim, 11)
-	statusLabel.AnchorPoint = Vector2.new(1, 0.5)
-	statusLabel.Position = UDim2.new(1, -66, 0.5, 0)
-	statusLabel.Size = UDim2.fromOffset(120, 14)
-	statusLabel.TextXAlignment = Enum.TextXAlignment.Right
-
-	local refreshBtn = New("TextButton", {
-		Size = UDim2.fromOffset(22, 22),
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -38, 0.5, 0),
-		BackgroundTransparency = 1,
-		AutoButtonColor = false,
-		Text = "",
-		Parent = topBar,
-	})
-	local refreshIcon = AttachIcon(refreshBtn, "refresh-cw", Theme.TextDim, 15)
-	if refreshIcon then
-		refreshIcon.AnchorPoint = Vector2.new(0.5, 0.5)
-		refreshIcon.Position = UDim2.fromScale(0.5, 0.5)
-	end
-
-	local closeBtn = New("TextButton", {
-		Size = UDim2.fromOffset(22, 22),
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -12, 0.5, 0),
-		BackgroundTransparency = 1,
-		AutoButtonColor = false,
-		Text = "",
-		Parent = topBar,
-	})
-	local closeBars = {}
-	for i = 1, 2 do
-		local bar = New("Frame", {
-			Size = UDim2.fromOffset(13, 2),
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(0.5, 0.5),
-			Rotation = i == 1 and 45 or -45,
-			BackgroundColor3 = Theme.TextDim,
-			BorderSizePixel = 0,
-			Parent = closeBtn,
-			ThemeTag = { BackgroundColor3 = "TextDim" },
-		})
-		Corner(bar, 1)
-		closeBars[i] = bar
-	end
-
-	-- list
-	local list = New("ScrollingFrame", {
-		Size = UDim2.new(1, -20, 1, -54),
-		Position = UDim2.fromOffset(10, 48),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ScrollBarThickness = 3,
-		ScrollBarImageColor3 = Theme.AccentDim,
-		ScrollBarImageTransparency = 0.3,
-		VerticalScrollBarInset = Enum.ScrollBarInset.None,
-		Parent = main,
-		ThemeTag = { ScrollBarImageColor3 = "AccentDim" },
-	})
-	List(list, 6)
-	Pad(list, 2, 8, 2, 2)
-
-	local api = {
-		Gui = gui,
-		Frame = main,
-		Open = false,
-	}
-
-	local loading = false
-
-	local function clearRows()
-		for _, child in ipairs(list:GetChildren()) do
-			if child:IsA("Frame") then child:Destroy() end
-		end
-	end
-
-	local function addRow(server, index)
-		local row = New("Frame", {
-			Size = UDim2.new(1, 0, 0, 44),
-			BackgroundColor3 = Theme.Section,
-			BorderSizePixel = 0,
-			LayoutOrder = index,
-			Parent = list,
-			ThemeTag = { BackgroundColor3 = "Section" },
-		})
-		Corner(row, 6)
-		Stroke(row, Theme.SectionBorder)
-
-		local players = Label(row, string.format("%d / %d players", server.playing or 0, server.maxPlayers or 0), Theme.TextBright)
-		players.Position = UDim2.fromOffset(12, 6)
-		players.Size = UDim2.new(1, -90, 0, 16)
-
-		local ping = server.ping or 0
-		local pingColor = Theme.TextCode
-		if ping > 150 then
-			pingColor = Theme.Danger
-		elseif ping > 80 then
-			pingColor = Theme.TextMarked
-		end
-
-		local meta = Label(row, string.format("%d ms  -  %d fps", math.floor(ping), math.floor(server.fps or 0)), pingColor, 11)
-		meta.Position = UDim2.fromOffset(12, 23)
-		meta.Size = UDim2.new(1, -90, 0, 14)
-
-		local joinFrame = New("Frame", {
-			Size = UDim2.fromOffset(62, 26),
-			AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, -10, 0.5, 0),
-			BackgroundColor3 = Theme.Accent,
-			BorderSizePixel = 0,
-			Parent = row,
-			ThemeTag = { BackgroundColor3 = "Accent" },
-		})
-		Corner(joinFrame, 6)
-
-		local joinBtn = New("TextButton", {
-			Size = UDim2.fromScale(1, 1),
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
 			BackgroundTransparency = 1,
+			Image = "rbxassetid://2454009026",
+			ImageColor3 = Color3.new(),
+			ImageTransparency = 0.8,
+			Parent = option.listvalue
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.fromRGB(60, 60, 60),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.listvalue
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, -2, 1, -2),
+			Position = UDim2.new(0, 1, 0, 1),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.new(),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.listvalue
+		})
+
+		option.arrow = library:Create("ImageLabel", {
+			Position = UDim2.new(1, -16, 0, 7),
+			Size = UDim2.new(0, 8, 0, 8),
+			Rotation = 90,
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://4918373417",
+			ImageColor3 = Color3.new(1, 1, 1),
+			ScaleType = Enum.ScaleType.Fit,
+			ImageTransparency = 0.4,
+			Parent = option.listvalue
+		})
+
+		option.holder = library:Create("TextButton", {
+			ZIndex = 4,
+			BackgroundColor3 = Color3.fromRGB(40, 40, 40),
+			BorderColor3 = Color3.new(),
+			Text = "",
 			AutoButtonColor = false,
-			Text = "join",
-			TextColor3 = Color3.fromRGB(40, 32, 34),
-			TextSize = Theme.TextSize,
-			Font = Theme.FontMedium,
-			Parent = joinFrame,
+			Visible = false,
+			Parent = library.base
 		})
 
-		Track(joinBtn.Activated:Connect(function()
-			Library:Notify(opts.Title or "servers", "teleporting...", 3)
-
-			-- Games that route teleports through their own server reject a
-			-- direct client call, OnJoin lets the script use their module
-			if opts.OnJoin then
-				Library:SafeCallback("server browser", opts.OnJoin, server.id, placeId, server)
-				return
-			end
-
-			-- TeleportAsync is server side only, the client must use the
-			-- legacy call here
-			local ok, err = pcall(function()
-				TeleportService:TeleportToPlaceInstance(placeId, server.id, player)
-			end)
-
-			if not ok then
-				Library:Error(opts.Title or "servers", tostring(err), 6)
-			end
-		end))
-	end
-
-	local function refresh()
-		if loading then return end
-		loading = true
-		statusLabel.Text = "loading..."
-		clearRows()
-
-		task.spawn(function()
-			local ok, result = pcall(function()
-				local url = "https://games.roblox.com/v1/games/" .. placeId
-					.. "/servers/Public?sortOrder=Asc&limit=100"
-				return HttpService:JSONDecode(game:HttpGet(url))
-			end)
-
-			if not ok or type(result) ~= "table" or type(result.data) ~= "table" then
-				statusLabel.Text = "request failed"
-				loading = false
-				return
-			end
-
-			local servers = {}
-			for _, srv in ipairs(result.data) do
-				if not (placeId == game.PlaceId and srv.id == game.JobId) then
-					table.insert(servers, srv)
-				end
-			end
-
-			table.sort(servers, function(a, b)
-				return (a.ping or 999) < (b.ping or 999)
-			end)
-
-			local shown = 0
-			for _, srv in ipairs(servers) do
-				shown = shown + 1
-				addRow(srv, shown)
-				if shown >= (opts.MaxRows or 40) then break end
-			end
-
-			statusLabel.Text = shown .. " servers"
-			loading = false
-		end)
-	end
-
-	Track(refreshBtn.Activated:Connect(refresh))
-	Track(refreshBtn.MouseEnter:Connect(function()
-		if refreshIcon then Tween(refreshIcon, { ImageColor3 = Theme.Accent }, EASE_FAST) end
-	end))
-	Track(refreshBtn.MouseLeave:Connect(function()
-		if refreshIcon then Tween(refreshIcon, { ImageColor3 = Theme.TextDim }, EASE_FAST) end
-	end))
-
-	Track(closeBtn.Activated:Connect(function() api:SetVisible(false) end))
-	Track(closeBtn.MouseEnter:Connect(function()
-		for _, bar in ipairs(closeBars) do Tween(bar, { BackgroundColor3 = Theme.Danger }, EASE_FAST) end
-	end))
-	Track(closeBtn.MouseLeave:Connect(function()
-		for _, bar in ipairs(closeBars) do Tween(bar, { BackgroundColor3 = Theme.TextDim }, EASE_FAST) end
-	end))
-
-	-- drag
-	do
-		local dragging, dragStart, startPos = false, nil, nil
-		local targetPos = main.Position
-		local activeInput = nil
-		Track(topBar.InputBegan:Connect(function(input)
-			if input.UserInputType ~= Enum.UserInputType.MouseButton1
-				and input.UserInputType ~= Enum.UserInputType.Touch then return end
-			if dragging then return end
-			dragging = true
-			activeInput = input
-			dragStart = input.Position
-			startPos = main.Position
-			targetPos = main.Position
-			input.Changed:Connect(function()
-				if input.UserInputState == Enum.UserInputState.End then
-					dragging = false
-					activeInput = nil
-				end
-			end)
-		end))
-		Track(UserInputService.InputChanged:Connect(function(input)
-			if not dragging then return end
-			if input ~= activeInput and input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-			if input.UserInputType ~= Enum.UserInputType.MouseMovement
-				and input.UserInputType ~= Enum.UserInputType.Touch then return end
-			local delta = input.Position - dragStart
-			main.Position = UDim2.new(
-				startPos.X.Scale, startPos.X.Offset + delta.X,
-				startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-		end))
-	end
-
-	function api:SetVisible(state)
-		self.Open = state and true or false
-		gui.Enabled = self.Open
-		if self.Open and #list:GetChildren() <= 2 then
-			refresh()
-		end
-	end
-
-	function api:Toggle()
-		self:SetVisible(not self.Open)
-	end
-
-	function api:Refresh()
-		refresh()
-	end
-
-	self.ServerBrowserApi = api
-	return api
-end
-
-function Library:ToggleUI(state)
-	if state == nil then state = not self.Open end
-	self.Open = state
-	for _, window in ipairs(self.Windows) do
-		window:SetVisible(state)
-	end
-	self:RefreshCursor()
-	return self.Open
-end
-
-function Library:CreateMobileButton(opts)
-	if self.MobileGui then return self.MobileButton end
-	opts = opts or {}
-
-	local gui = New("ScreenGui", {
-		Name = RandomName(),
-		ResetOnSpawn = false,
-		IgnoreGuiInset = true,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-		AutoLocalize = false,
-		DisplayOrder = MAX_DISPLAY_ORDER,
-	})
-	ParentGui(gui)
-
-	local button = New("TextButton", {
-		Size = UDim2.fromOffset(opts.Size or 44, opts.Size or 44),
-		Position = opts.Position or UDim2.new(0, 18, 0.5, -22),
-		BackgroundColor3 = Theme.Section,
-		AutoButtonColor = false,
-		Text = "",
-		BorderSizePixel = 0,
-		Parent = gui,
-		ThemeTag = { BackgroundColor3 = "Section" },
-	})
-	Corner(button, 12)
-	Stroke(button, Theme.Border)
-	for i = 1, 3 do
-		local bar = New("Frame", {
-			Size = UDim2.fromOffset(18, 2),
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.new(0.5, 0, 0.5, (i - 2) * 6),
-			BackgroundColor3 = Theme.Accent,
+		option.content = library:Create("ScrollingFrame", {
+			ZIndex = 4,
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Parent = button,
-			ThemeTag = { BackgroundColor3 = "Accent" },
+			ScrollBarImageColor3 = Color3.new(),
+			ScrollBarThickness = 3,
+			ScrollingDirection = Enum.ScrollingDirection.Y,
+			VerticalScrollBarInset = Enum.ScrollBarInset.Always,
+			TopImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
+			BottomImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
+			Parent = option.holder
 		})
-		Corner(bar, 1)
-	end
 
-	local moved, origin, startPos, moveConn, endConn
-	local pressing = false
-	local lastToggle = 0
+		library:Create("ImageLabel", {
+			ZIndex = 4,
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.fromRGB(60, 60, 60),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.holder
+		})
 
-	Track(button.InputBegan:Connect(function(input)
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1
-			and input.UserInputType ~= Enum.UserInputType.Touch then return end
-		-- touch also emits a mouse event on mobile, ignore the duplicate
-		if pressing then return end
-		pressing = true
+		library:Create("ImageLabel", {
+			ZIndex = 4,
+			Size = UDim2.new(1, -2, 1, -2),
+			Position = UDim2.new(0, 1, 0, 1),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.new(),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.holder
+		})
 
-		moved = false
-		origin = input.Position
-		startPos = button.Position
-		Tween(button, { BackgroundColor3 = Theme.FieldHover }, EASE_FAST)
+		local layout = library:Create("UIListLayout", {
+			Padding = UDim.new(0, 2),
+			Parent = option.content
+		})
 
-		moveConn = UserInputService.InputChanged:Connect(function(move)
-			if move.UserInputType ~= Enum.UserInputType.MouseMovement
-				and move.UserInputType ~= Enum.UserInputType.Touch then return end
-			local delta = move.Position - origin
-			if math.abs(delta.X) > 6 or math.abs(delta.Y) > 6 then moved = true end
-			button.Position = UDim2.new(
-				startPos.X.Scale, startPos.X.Offset + delta.X,
-				startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		library:Create("UIPadding", {
+			PaddingTop = UDim.new(0, 4),
+			PaddingLeft = UDim.new(0, 4),
+			Parent = option.content
+		})
+
+		local valueCount = 0
+		layout.Changed:connect(function()
+			option.holder.Size = UDim2.new(0, option.listvalue.AbsoluteSize.X, 0, 8 + (valueCount > option.max and (-2 + (option.max * 22)) or layout.AbsoluteContentSize.Y))
+			option.content.CanvasSize = UDim2.new(0, 0, 0, 8 + layout.AbsoluteContentSize.Y)
 		end)
+		local interest = option.sub and option.listvalue or option.main
 
-		endConn = UserInputService.InputEnded:Connect(function(ended)
-			if ended.UserInputType ~= Enum.UserInputType.MouseButton1
-				and ended.UserInputType ~= Enum.UserInputType.Touch then return end
-			if moveConn then moveConn:Disconnect() moveConn = nil end
-			if endConn then endConn:Disconnect() endConn = nil end
-			pressing = false
-			Tween(button, { BackgroundColor3 = Theme.Section }, EASE_FAST)
-
-			if not moved and (tick() - lastToggle) > 0.25 then
-				lastToggle = tick()
-				Library:ToggleUI()
+		option.listvalue.InputBegan:connect(function(input)
+			if input.UserInputType.Name == "MouseButton1" then
+				if library.popup == option then library.popup:Close() return end
+				if library.popup then
+					library.popup:Close()
+				end
+				option.arrow.Rotation = -90
+				option.open = true
+				option.holder.Visible = true
+				local pos = option.main.AbsolutePosition
+				option.holder.Position = UDim2.new(0, pos.X + 6, 0, pos.Y + ((option.text == "nil" and not option.sub) and 66 or 84))
+				library.popup = option
+				option.listvalue.BorderColor3 = library.flags["Menu Accent Color"]
+			end
+			if input.UserInputType.Name == "MouseMovement" then
+				if not library.warning and not library.slider then
+					option.listvalue.BorderColor3 = library.flags["Menu Accent Color"]
+				end
 			end
 		end)
-	end))
 
-	self.MobileGui = gui
-	self.MobileButton = button
-	return button
-end
+		option.listvalue.InputEnded:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				if not option.open then
+					option.listvalue.BorderColor3 = Color3.new()
+				end
+			end
+		end)
 
-function Library:SetMobileButtonVisible(state)
-	if not self.MobileGui then
-		if not state then return end
-		self:CreateMobileButton()
-	end
-	self.MobileGui.Enabled = state and true or false
-end
+		interest.InputBegan:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				if option.tip then
+					library.tooltip.Text = option.tip
+					library.tooltip.Size = UDim2.new(0, textService:GetTextSize(option.tip, 15, Enum.Font.Code, Vector2.new(9e9, 9e9)).X, 0, 20)
+				end
+			end
+		end)
 
-Track(UserInputService.InputBegan:Connect(function(input, gpe)
-	if gpe or Library.Binding then return end
-	local hit = (Library.ToggleKey ~= nil and input.KeyCode == Library.ToggleKey)
-		or (Library.ToggleInput ~= nil and input.UserInputType == Library.ToggleInput)
-	if hit then
-		Library:ToggleUI()
-	end
-end))
+		interest.InputChanged:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				if option.tip then
+					library.tooltip.Position = UDim2.new(0, input.Position.X + 26, 0, input.Position.Y + 36)
+				end
+			end
+		end)
 
-function Library:Destroy()
-	for _, conn in ipairs(self.Connections) do
-		pcall(function() conn:Disconnect() end)
-	end
-	table.clear(self.Connections)
-	for _, w in ipairs(self.Windows) do
-		w.Gui:Destroy()
-	end
-	table.clear(self.Windows)
-	if self.NotifyGui then self.NotifyGui:Destroy() self.NotifyGui = nil end
-	if self.MobileGui then self.MobileGui:Destroy() self.MobileGui = nil self.MobileButton = nil end
-	if self.CursorBind then
-		pcall(function() RunService:UnbindFromRenderStep(self.CursorBind) end)
-		self.CursorBind = nil
-	end
-	if self.CursorGui then self.CursorGui:Destroy() self.CursorGui = nil self.CursorHolder = nil end
-	if self.ServerBrowserApi then pcall(function() self.ServerBrowserApi.Gui:Destroy() end) self.ServerBrowserApi = nil end
-	if self.HotkeyGui then self.HotkeyGui:Destroy() self.HotkeyGui = nil self.HotkeyPanel = nil end
-	for index = #self.Panels, 1, -1 do
-		pcall(function() self.Panels[index].Gui:Destroy() end)
-		self.Panels[index] = nil
-	end
-	table.clear(self.HotkeyEntries)
-	table.clear(self.Registry)
-	table.clear(self.Flags)
-end
+		interest.InputEnded:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				library.tooltip.Position = UDim2.new(2)
+			end
+		end)
 
-local HttpService = game:GetService("HttpService")
+		local selected
+		function option:AddValue(value, state)
+			if self.labels[value] then return end
+			valueCount = valueCount + 1
 
-local FileSystem = {}
-FileSystem.Memory = {}
-FileSystem.Native = typeof(writefile) == "function" and typeof(readfile) == "function"
+			if self.multiselect then
+				self.values[value] = state
+			else
+				if not table.find(self.values, value) then
+					table.insert(self.values, value)
+				end
+			end
 
-function FileSystem:MakeFolder(path)
-	if not self.Native then return end
-	if typeof(makefolder) == "function" and typeof(isfolder) == "function" then
-		local ok, exists = pcall(isfolder, path)
-		if ok and not exists then pcall(makefolder, path) end
-	end
-end
+			local label = library:Create("TextLabel", {
+				ZIndex = 4,
+				Size = UDim2.new(1, 0, 0, 20),
+				BackgroundTransparency = 1,
+				Text = value,
+				TextSize = 15,
+				Font = Enum.Font.Code,
+				TextTransparency = self.multiselect and (self.value[value] and 1 or 0) or self.value == value and 1 or 0,
+				TextColor3 = Color3.fromRGB(210, 210, 210),
+				TextXAlignment = Enum.TextXAlignment.Left,
+				Parent = option.content
+			})
+			self.labels[value] = label
 
-function FileSystem:Write(path, text)
-	if self.Native and pcall(writefile, path, text) then
-		self.Memory[path] = nil
-		return true
-	end
-	self.Memory[path] = text
-	return true
-end
+			local labelOverlay = library:Create("TextLabel", {
+				ZIndex = 4,	
+				Size = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 0.8,
+				Text = " " ..value,
+				TextSize = 15,
+				Font = Enum.Font.Code,
+				TextColor3 = library.flags["Menu Accent Color"],
+				TextXAlignment = Enum.TextXAlignment.Left,
+				Visible = self.multiselect and self.value[value] or self.value == value,
+				Parent = label
+			})
+			selected = selected or self.value == value and labelOverlay
+			table.insert(library.theme, labelOverlay)
 
-function FileSystem:Read(path)
-	if self.Native and typeof(isfile) == "function" then
-		local ok, exists = pcall(isfile, path)
-		if ok and exists then
-			local read, data = pcall(readfile, path)
-			if read then return data end
+			label.InputBegan:connect(function(input)
+				if input.UserInputType.Name == "MouseButton1" then
+					if self.multiselect then
+						self.value[value] = not self.value[value]
+						self:SetValue(self.value)
+					else
+						self:SetValue(value)
+						self:Close()
+					end
+				end
+			end)
 		end
-	end
-	return self.Memory[path]
-end
 
-function FileSystem:Delete(path)
-	if self.Native and typeof(delfile) == "function" then pcall(delfile, path) end
-	self.Memory[path] = nil
-end
+		for i, value in next, option.values do
+			option:AddValue(tostring(typeof(i) == "number" and value or i))
+		end
 
-function FileSystem:List(folder)
-	local names, seen = {}, {}
-	if self.Native and typeof(listfiles) == "function" then
-		local ok, files = pcall(listfiles, folder)
-		if ok and files then
-			for _, full in ipairs(files) do
-				local name = string.match(full, "[^/\\]+$")
-				if name and not seen[name] then
-					seen[name] = true
-					table.insert(names, name)
+		function option:RemoveValue(value)
+			local label = self.labels[value]
+			if label then
+				label:Destroy()
+				self.labels[value] = nil
+				valueCount = valueCount - 1
+				if self.multiselect then
+					self.values[value] = nil
+					self:SetValue(self.value)
+				else
+					table.remove(self.values, table.find(self.values, value))
+					if self.value == value then
+						selected = nil
+						self:SetValue(self.values[1] or "")
+					end
 				end
 			end
 		end
-	end
-	for path in pairs(self.Memory) do
-		if string.sub(path, 1, #folder + 1) == folder .. "/" then
-			local name = string.match(path, "[^/\\]+$")
-			if name and not seen[name] then
-				seen[name] = true
-				table.insert(names, name)
+
+		function option:SetValue(value, nocallback)
+			if self.multiselect and typeof(value) ~= "table" then
+				value = {}
+				for i,v in next, self.values do
+					value[v] = false
+				end
+			end
+			self.value = typeof(value) == "table" and value or tostring(table.find(self.values, value) and value or self.values[1])
+			library.flags[self.flag] = self.value
+			option.listvalue.Text = " " .. (self.multiselect and getMultiText() or self.value)
+			if self.multiselect then
+				for name, label in next, self.labels do
+					label.TextTransparency = self.value[name] and 1 or 0
+					if label:FindFirstChild"TextLabel" then
+						label.TextLabel.Visible = self.value[name]
+					end
+				end
+			else
+				if selected then
+					selected.TextTransparency = 0
+					if selected:FindFirstChild"TextLabel" then
+						selected.TextLabel.Visible = false
+					end
+				end
+				if self.labels[self.value] then
+					selected = self.labels[self.value]
+					selected.TextTransparency = 1
+					if selected:FindFirstChild"TextLabel" then
+						selected.TextLabel.Visible = true
+					end
+				end
+			end
+			if not nocallback then
+				self.callback(self.value)
 			end
 		end
+		delay(1, function()
+			if library then
+				option:SetValue(option.value)
+			end
+		end)
+
+		function option:Close()
+			library.popup = nil
+			option.arrow.Rotation = 90
+			self.open = false
+			option.holder.Visible = false
+			option.listvalue.BorderColor3 = Color3.new()
+		end
+
+		return option
 	end
-	table.sort(names)
-	return names
-end
 
-function Library:BuildFolders(folder)
-	local path = ""
-	for _, part in ipairs(string.split(folder, "/")) do
-		path = path == "" and part or (path .. "/" .. part)
-		FileSystem:MakeFolder(path)
+	library.createBox = function(option, parent)
+		option.hasInit = true
+
+		option.main = library:Create("Frame", {
+			LayoutOrder = option.position,
+			Size = UDim2.new(1, 0, 0, option.text == "nil" and 28 or 44),
+			BackgroundTransparency = 1,
+			Parent = parent
+		})
+
+		if option.text ~= "nil" then
+			option.title = library:Create("TextLabel", {
+				Position = UDim2.new(0, 6, 0, 0),
+				Size = UDim2.new(1, -12, 0, 18),
+				BackgroundTransparency = 1,
+				Text = option.text,
+				TextSize = 15,
+				Font = Enum.Font.Code,
+				TextColor3 = Color3.fromRGB(210, 210, 210),
+				TextXAlignment = Enum.TextXAlignment.Left,
+				Parent = option.main
+			})
+		end
+
+		option.holder = library:Create("Frame", {
+			Position = UDim2.new(0, 6, 0, option.text == "nil" and 4 or 20),
+			Size = UDim2.new(1, -12, 0, 20),
+			BackgroundColor3 = Color3.fromRGB(50, 50, 50),
+			BorderColor3 = Color3.new(),
+			Parent = option.main
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2454009026",
+			ImageColor3 = Color3.new(),
+			ImageTransparency = 0.8,
+			Parent = option.holder
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.fromRGB(60, 60, 60),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.holder
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, -2, 1, -2),
+			Position = UDim2.new(0, 1, 0, 1),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.new(),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.holder
+		})
+
+		local inputvalue = library:Create("TextBox", {
+			Position = UDim2.new(0, 4, 0, 0),
+			Size = UDim2.new(1, -4, 1, 0),
+			BackgroundTransparency = 1,
+			Text = "  " .. option.value,
+			TextSize = 15,
+			Font = Enum.Font.Code,
+			TextColor3 = Color3.new(1, 1, 1),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextWrapped = true,
+			ClearTextOnFocus = false,
+			Parent = option.holder
+		})
+
+		inputvalue.FocusLost:connect(function(enter)
+			option.holder.BorderColor3 = Color3.new()
+			option:SetValue(inputvalue.Text, enter)
+		end)
+
+		inputvalue.Focused:connect(function()
+			option.holder.BorderColor3 = library.flags["Menu Accent Color"]
+		end)
+
+		inputvalue.InputBegan:connect(function(input)
+			if input.UserInputType.Name == "MouseButton1" then
+				inputvalue.Text = ""
+			end
+			if input.UserInputType.Name == "MouseMovement" then
+				if not library.warning and not library.slider then
+					option.holder.BorderColor3 = library.flags["Menu Accent Color"]
+				end
+				if option.tip then
+					library.tooltip.Text = option.tip
+					library.tooltip.Size = UDim2.new(0, textService:GetTextSize(option.tip, 15, Enum.Font.Code, Vector2.new(9e9, 9e9)).X, 0, 20)
+				end
+			end
+		end)
+
+		inputvalue.InputChanged:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				if option.tip then
+					library.tooltip.Position = UDim2.new(0, input.Position.X + 26, 0, input.Position.Y + 36)
+				end
+			end
+		end)
+
+		inputvalue.InputEnded:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				if not inputvalue:IsFocused() then
+					option.holder.BorderColor3 = Color3.new()
+				end
+				library.tooltip.Position = UDim2.new(2)
+			end
+		end)
+
+		function option:SetValue(value, enter)
+			if tostring(value) == "" then
+				inputvalue.Text = self.value
+			else
+				library.flags[self.flag] = tostring(value)
+				self.value = tostring(value)
+				inputvalue.Text = self.value
+				self.callback(value, enter)
+			end
+		end
+		delay(1, function()
+			if library then
+				option:SetValue(option.value)
+			end
+		end)
 	end
-	FileSystem:MakeFolder(folder .. "/configs")
-	FileSystem:MakeFolder(folder .. "/settings")
-	return folder
-end
 
-Library.FileSystem = FileSystem
+	library.createColorPickerWindow = function(option)
+		option.mainHolder = library:Create("TextButton", {
+			ZIndex = 4,
+			--Position = UDim2.new(1, -184, 1, 6),
+			Size = UDim2.new(0, option.trans and 200 or 184, 0, 264),
+			BackgroundColor3 = Color3.fromRGB(40, 40, 40),
+			BorderColor3 = Color3.new(),
+			AutoButtonColor = false,
+			Visible = false,
+			Parent = library.base
+		})
 
-if getgenv then
-	pcall(function() getgenv().Facility = Library end)
-end
-Library.SaveManager = Library:LoadAddon("SaveManager")
-Library.InterfaceManager = Library:LoadAddon("InterfaceManager")
-Library.ThemeManager = Library:LoadAddon("ThemeManager")
+		option.rgbBox = library:Create("Frame", {
+			Position = UDim2.new(0, 6, 0, 214),
+			Size = UDim2.new(0, (option.mainHolder.AbsoluteSize.X - 12), 0, 20),
+			BackgroundColor3 = Color3.fromRGB(57, 57, 57),
+			BorderColor3 = Color3.new(),
+			ZIndex = 5;
+			Parent = option.mainHolder
+		})
 
-return Library
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2454009026",
+			ImageColor3 = Color3.new(),
+			ImageTransparency = 0.8,
+			ZIndex = 6;
+			Parent = option.rgbBox
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.fromRGB(60, 60, 60),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			ZIndex = 6;
+			Parent = option.rgbBox
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, -2, 1, -2),
+			Position = UDim2.new(0, 1, 0, 1),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.new(),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			ZIndex = 6;
+			Parent = option.rgbBox
+		})
+
+		option.rgbInput = library:Create("TextBox", {
+			Position = UDim2.new(0, 4, 0, 0),
+			Size = UDim2.new(1, -4, 1, 0),
+			BackgroundTransparency = 1,
+			Text = tostring(option.color),
+			TextSize = 14,
+			Font = Enum.Font.Code,
+			TextColor3 = Color3.new(1, 1, 1),
+			TextXAlignment = Enum.TextXAlignment.Center,
+			TextWrapped = true,
+			ClearTextOnFocus = false,
+			ZIndex = 6;
+			Parent = option.rgbBox
+		})
+
+		option.hexBox = option.rgbBox:Clone()
+		option.hexBox.Position = UDim2.new(0, 6, 0, 238)
+		-- option.hexBox.Size = UDim2.new(0, (option.mainHolder.AbsoluteSize.X/2 - 10), 0, 20)
+		option.hexBox.Parent = option.mainHolder
+		option.hexInput = option.hexBox.TextBox;
+
+		library:Create("ImageLabel", {
+			ZIndex = 4,
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.fromRGB(60, 60, 60),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.mainHolder
+		})
+
+		library:Create("ImageLabel", {
+			ZIndex = 4,
+			Size = UDim2.new(1, -2, 1, -2),
+			Position = UDim2.new(0, 1, 0, 1),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.new(),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.mainHolder
+		})
+
+		local hue, sat, val = Color3.toHSV(option.color)
+		hue, sat, val = hue == 0 and 1 or hue, sat + 0.005, val - 0.005
+		local editinghue
+		local editingsatval
+		local editingtrans
+
+		local transMain
+		if option.trans then
+			transMain = library:Create("ImageLabel", {
+				ZIndex = 5,
+				Size = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Image = "rbxassetid://2454009026",
+				ImageColor3 = Color3.fromHSV(hue, 1, 1),
+				Rotation = 180,
+				Parent = library:Create("ImageLabel", {
+					ZIndex = 4,
+					AnchorPoint = Vector2.new(1, 0),
+					Position = UDim2.new(1, -6, 0, 6),
+					Size = UDim2.new(0, 10, 1, -60),
+					BorderColor3 = Color3.new(),
+					Image = "rbxassetid://4632082392",
+					ScaleType = Enum.ScaleType.Tile,
+					TileSize = UDim2.new(0, 5, 0, 5),
+					Parent = option.mainHolder
+				})
+			})
+
+			option.transSlider = library:Create("Frame", {
+				ZIndex = 5,
+				Position = UDim2.new(0, 0, option.trans, 0),
+				Size = UDim2.new(1, 0, 0, 2),
+				BackgroundColor3 = Color3.fromRGB(38, 41, 65),
+				BorderColor3 = Color3.fromRGB(255, 255, 255),
+				Parent = transMain
+			})
+
+			transMain.InputBegan:connect(function(Input)
+				if Input.UserInputType.Name == "MouseButton1" then
+					editingtrans = true
+					option:SetTrans(1 - ((Input.Position.Y - transMain.AbsolutePosition.Y) / transMain.AbsoluteSize.Y))
+				end
+			end)
+
+			transMain.InputEnded:connect(function(Input)
+				if Input.UserInputType.Name == "MouseButton1" then
+					editingtrans = false
+				end
+			end)
+		end
+
+		local hueMain = library:Create("Frame", {
+			ZIndex = 4,
+			AnchorPoint = Vector2.new(0, 1),
+			Position = UDim2.new(0, 6, 1, -54),
+			Size = UDim2.new(1, option.trans and -28 or -12, 0, 10),
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderColor3 = Color3.new(),
+			Parent = option.mainHolder
+		})
+
+		local Gradient = library:Create("UIGradient", {
+			Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
+				ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 0, 255)),
+				ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 0, 255)),
+				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
+				ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 255, 0)),
+				ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 255, 0)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0)),
+			}),
+			Parent = hueMain
+		})
+
+		local hueSlider = library:Create("Frame", {
+			ZIndex = 4,
+			Position = UDim2.new(1 - hue, 0, 0, 0),
+			Size = UDim2.new(0, 2, 1, 0),
+			BackgroundColor3 = Color3.fromRGB(38, 41, 65),
+			BorderColor3 = Color3.fromRGB(255, 255, 255),
+			Parent = hueMain
+		})
+
+		hueMain.InputBegan:connect(function(Input)
+			if Input.UserInputType.Name == "MouseButton1" then
+				editinghue = true
+				X = (hueMain.AbsolutePosition.X + hueMain.AbsoluteSize.X) - hueMain.AbsolutePosition.X
+				X = math.clamp((Input.Position.X - hueMain.AbsolutePosition.X) / X, 0, 0.995)
+				option:SetColor(Color3.fromHSV(1 - X, sat, val))
+			end
+		end)
+
+		hueMain.InputEnded:connect(function(Input)
+			if Input.UserInputType.Name == "MouseButton1" then
+				editinghue = false
+			end
+		end)
+
+		local satval = library:Create("ImageLabel", {
+			ZIndex = 4,
+			Position = UDim2.new(0, 6, 0, 6),
+			Size = UDim2.new(1, option.trans and -28 or -12, 1, -74),
+			BackgroundColor3 = Color3.fromHSV(hue, 1, 1),
+			BorderColor3 = Color3.new(),
+			Image = "rbxassetid://4155801252",
+			ClipsDescendants = true,
+			Parent = option.mainHolder
+		})
+
+		local satvalSlider = library:Create("Frame", {
+			ZIndex = 4,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(sat, 0, 1 - val, 0),
+			Size = UDim2.new(0, 4, 0, 4),
+			Rotation = 45,
+			BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+			Parent = satval
+		})
+
+		satval.InputBegan:connect(function(Input)
+			if Input.UserInputType.Name == "MouseButton1" then
+				editingsatval = true
+				X = (satval.AbsolutePosition.X + satval.AbsoluteSize.X) - satval.AbsolutePosition.X
+				Y = (satval.AbsolutePosition.Y + satval.AbsoluteSize.Y) - satval.AbsolutePosition.Y
+				X = math.clamp((Input.Position.X - satval.AbsolutePosition.X) / X, 0.005, 1)
+				Y = math.clamp((Input.Position.Y - satval.AbsolutePosition.Y) / Y, 0, 0.995)
+				option:SetColor(Color3.fromHSV(hue, X, 1 - Y))
+			end
+		end)
+
+		library:AddConnection(inputService.InputChanged, function(Input)
+			if Input.UserInputType.Name == "MouseMovement" then
+				if editingsatval then
+					X = (satval.AbsolutePosition.X + satval.AbsoluteSize.X) - satval.AbsolutePosition.X
+					Y = (satval.AbsolutePosition.Y + satval.AbsoluteSize.Y) - satval.AbsolutePosition.Y
+					X = math.clamp((Input.Position.X - satval.AbsolutePosition.X) / X, 0.005, 1)
+					Y = math.clamp((Input.Position.Y - satval.AbsolutePosition.Y) / Y, 0, 0.995)
+					option:SetColor(Color3.fromHSV(hue, X, 1 - Y))
+				elseif editinghue then
+					X = (hueMain.AbsolutePosition.X + hueMain.AbsoluteSize.X) - hueMain.AbsolutePosition.X
+					X = math.clamp((Input.Position.X - hueMain.AbsolutePosition.X) / X, 0, 0.995)
+					option:SetColor(Color3.fromHSV(1 - X, sat, val))
+				elseif editingtrans then
+					option:SetTrans(1 - ((Input.Position.Y - transMain.AbsolutePosition.Y) / transMain.AbsoluteSize.Y))
+				end
+			end
+		end)
+
+		satval.InputEnded:connect(function(Input)
+			if Input.UserInputType.Name == "MouseButton1" then
+				editingsatval = false
+			end
+		end)
+
+		local r, g, b = library.round(option.color)
+		option.hexInput.Text = string.format("#%02x%02x%02x", r, g, b)
+		option.rgbInput.Text = table.concat({r, g, b}, ",")
+
+		option.rgbInput.FocusLost:connect(function()
+			local r, g, b = option.rgbInput.Text:gsub("%s+", ""):match("(%d+),(%d+),(%d+)")
+			if r and g and b then
+				local color = Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b))
+				return option:SetColor(color)
+			end
+
+			local r, g, b = library.round(option.color)
+			option.rgbInput.Text = table.concat({r, g, b}, ",")
+		end)
+
+		option.hexInput.FocusLost:connect(function()
+			local r, g, b = option.hexInput.Text:match("#?(..)(..)(..)")
+			if r and g and b then
+				local color = Color3.fromRGB(tonumber("0x"..r), tonumber("0x"..g), tonumber("0x"..b))
+				return option:SetColor(color)
+			end
+
+			local r, g, b = library.round(option.color)
+			option.hexInput.Text = string.format("#%02x%02x%02x", r, g, b)
+		end)
+
+		function option:updateVisuals(Color)
+			hue, sat, val = Color3.toHSV(Color)
+			hue = hue == 0 and 1 or hue
+			satval.BackgroundColor3 = Color3.fromHSV(hue, 1, 1)
+			if option.trans then
+				transMain.ImageColor3 = Color3.fromHSV(hue, 1, 1)
+			end
+			hueSlider.Position = UDim2.new(1 - hue, 0, 0, 0)
+			satvalSlider.Position = UDim2.new(sat, 0, 1 - val, 0)
+
+			local r, g, b = library.round(Color3.fromHSV(hue, sat, val))
+
+			option.hexInput.Text = string.format("#%02x%02x%02x", r, g, b)
+			option.rgbInput.Text = table.concat({r, g, b}, ",")
+		end
+
+		return option
+	end
+
+	library.createColor = function(option, parent)
+		option.hasInit = true
+
+		if option.sub then
+			option.main = option:getMain()
+		else
+			option.main = library:Create("Frame", {
+				LayoutOrder = option.position,
+				Size = UDim2.new(1, 0, 0, 20),
+				BackgroundTransparency = 1,
+				Parent = parent
+			})
+
+			option.title = library:Create("TextLabel", {
+				Position = UDim2.new(0, 6, 0, 0),
+				Size = UDim2.new(1, -12, 1, 0),
+				BackgroundTransparency = 1,
+				Text = option.text,
+				TextSize = 15,
+				Font = Enum.Font.Code,
+				TextColor3 = Color3.fromRGB(210, 210, 210),
+				TextXAlignment = Enum.TextXAlignment.Left,
+				Parent = option.main
+			})
+		end
+
+		option.visualize = library:Create(option.sub and "TextButton" or "Frame", {
+			Position = UDim2.new(1, -(option.subpos or 0) - 24, 0, 4),
+			Size = UDim2.new(0, 18, 0, 12),
+			SizeConstraint = Enum.SizeConstraint.RelativeYY,
+			BackgroundColor3 = option.color,
+			BorderColor3 = Color3.new(),
+			Parent = option.main
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2454009026",
+			ImageColor3 = Color3.new(),
+			ImageTransparency = 0.6,
+			Parent = option.visualize
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.fromRGB(60, 60, 60),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.visualize
+		})
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, -2, 1, -2),
+			Position = UDim2.new(0, 1, 0, 1),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.new(),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = option.visualize
+		})
+
+		local interest = option.sub and option.visualize or option.main
+
+		if option.sub then
+			option.visualize.Text = ""
+			option.visualize.AutoButtonColor = false
+		end
+
+		interest.InputBegan:connect(function(input)
+			if input.UserInputType.Name == "MouseButton1" then
+				if not option.mainHolder then library.createColorPickerWindow(option) end
+				if library.popup == option then library.popup:Close() return end
+				if library.popup then library.popup:Close() end
+				option.open = true
+				local pos = option.main.AbsolutePosition
+				option.mainHolder.Position = UDim2.new(0, pos.X + 36 + (option.trans and -16 or 0), 0, pos.Y + 56)
+				option.mainHolder.Visible = true
+				library.popup = option
+				option.visualize.BorderColor3 = library.flags["Menu Accent Color"]
+			end
+			if input.UserInputType.Name == "MouseMovement" then
+				if not library.warning and not library.slider then
+					option.visualize.BorderColor3 = library.flags["Menu Accent Color"]
+				end
+				if option.tip then
+					library.tooltip.Text = option.tip
+					library.tooltip.Size = UDim2.new(0, textService:GetTextSize(option.tip, 15, Enum.Font.Code, Vector2.new(9e9, 9e9)).X, 0, 20)
+				end
+			end
+		end)
+
+		interest.InputChanged:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				if option.tip then
+					library.tooltip.Position = UDim2.new(0, input.Position.X + 26, 0, input.Position.Y + 36)
+				end
+			end
+		end)
+
+		interest.InputEnded:connect(function(input)
+			if input.UserInputType.Name == "MouseMovement" then
+				if not option.open then
+					option.visualize.BorderColor3 = Color3.new()
+				end
+				library.tooltip.Position = UDim2.new(2)
+			end
+		end)
+
+		function option:SetColor(newColor, nocallback)
+			if typeof(newColor) == "table" then
+				newColor = Color3.new(newColor[1], newColor[2], newColor[3])
+			end
+			newColor = newColor or Color3.new(1, 1, 1)
+			if self.mainHolder then
+				self:updateVisuals(newColor)
+			end
+			option.visualize.BackgroundColor3 = newColor
+			library.flags[self.flag] = newColor
+			self.color = newColor
+			if not nocallback then
+				self.callback(newColor)
+			end
+		end
+
+		if option.trans then
+			function option:SetTrans(value, manual)
+				value = math.clamp(tonumber(value) or 0, 0, 1)
+				if self.transSlider then
+					self.transSlider.Position = UDim2.new(0, 0, value, 0)
+				end
+				self.trans = value
+				library.flags[self.flag .. " Transparency"] = 1 - value
+				self.calltrans(value)
+			end
+			option:SetTrans(option.trans)
+		end
+
+		delay(1, function()
+			if library then
+				option:SetColor(option.color)
+			end
+		end)
+
+		function option:Close()
+			library.popup = nil
+			self.open = false
+			self.mainHolder.Visible = false
+			option.visualize.BorderColor3 = Color3.new()
+		end
+	end
+
+	function library:AddTab(title, pos)
+		local tab = {canInit = true, tabs = {}, columns = {}, title = tostring(title)}
+		table.insert(self.tabs, pos or #self.tabs + 1, tab)
+
+		function tab:AddColumn()
+			local column = {sections = {}, position = #self.columns, canInit = true, tab = self}
+			table.insert(self.columns, column)
+
+			function column:AddSection(title)
+				local section = {title = tostring(title), options = {}, canInit = true, column = self}
+				table.insert(self.sections, section)
+
+				function section:AddLabel(text)
+					local option = {text = text}
+					option.section = self
+					option.type = "label"
+					option.position = #self.options
+					option.canInit = true
+					table.insert(self.options, option)
+
+					if library.hasInit and self.hasInit then
+						library.createLabel(option, self.content)
+					else
+						option.Init = library.createLabel
+					end
+
+					return option
+				end
+
+				function section:AddDivider(text)
+					local option = {text = text}
+					option.section = self
+					option.type = "divider"
+					option.position = #self.options
+					option.canInit = true
+					table.insert(self.options, option)
+
+					if library.hasInit and self.hasInit then
+						library.createDivider(option, self.content)
+					else
+						option.Init = library.createDivider
+					end
+
+					return option
+				end
+
+				function section:AddToggle(option)
+					option = typeof(option) == "table" and option or {}
+					option.section = self
+					option.text = tostring(option.text)
+					option.state = option.state == nil and nil or (typeof(option.state) == "boolean" and option.state or false)
+					option.callback = typeof(option.callback) == "function" and option.callback or function() end
+					option.type = "toggle"
+					option.position = #self.options
+					option.flag = (library.flagprefix and library.flagprefix .. " " or "") .. (option.flag or option.text)
+					option.subcount = 0
+					option.canInit = (option.canInit ~= nil and option.canInit) or true
+					option.tip = option.tip and tostring(option.tip)
+					option.style = option.style == 2
+					library.flags[option.flag] = option.state
+					table.insert(self.options, option)
+					library.options[option.flag] = option
+
+					function option:AddColor(subOption)
+						subOption = typeof(subOption) == "table" and subOption or {}
+						subOption.sub = true
+						subOption.subpos = self.subcount * 24
+						function subOption:getMain() return option.main end
+						self.subcount = self.subcount + 1
+						return section:AddColor(subOption)
+					end
+
+					function option:AddBind(subOption)
+						subOption = typeof(subOption) == "table" and subOption or {}
+						subOption.sub = true
+						subOption.subpos = self.subcount * 24
+						function subOption:getMain() return option.main end
+						self.subcount = self.subcount + 1
+						return section:AddBind(subOption)
+					end
+
+					function option:AddList(subOption)
+						subOption = typeof(subOption) == "table" and subOption or {}
+						subOption.sub = true
+						function subOption:getMain() return option.main end
+						self.subcount = self.subcount + 1
+						return section:AddList(subOption)
+					end
+
+					function option:AddSlider(subOption)
+						subOption = typeof(subOption) == "table" and subOption or {}
+						subOption.sub = true
+						function subOption:getMain() return option.main end
+						self.subcount = self.subcount + 1
+						return section:AddSlider(subOption)
+					end
+
+					if library.hasInit and self.hasInit then
+						library.createToggle(option, self.content)
+					else
+						option.Init = library.createToggle
+					end
+
+					return option
+				end
+
+				function section:AddButton(option)
+					option = typeof(option) == "table" and option or {}
+					option.section = self
+					option.text = tostring(option.text)
+					option.callback = typeof(option.callback) == "function" and option.callback or function() end
+					option.type = "button"
+					option.position = #self.options
+					option.flag = (library.flagprefix and library.flagprefix .. " " or "") .. (option.flag or option.text)
+					option.subcount = 0
+					option.canInit = (option.canInit ~= nil and option.canInit) or true
+					option.tip = option.tip and tostring(option.tip)
+					table.insert(self.options, option)
+					library.options[option.flag] = option
+
+					function option:AddBind(subOption)
+						subOption = typeof(subOption) == "table" and subOption or {}
+						subOption.sub = true
+						subOption.subpos = self.subcount * 24
+						function subOption:getMain() option.main.Size = UDim2.new(1, 0, 0, 40) return option.main end
+						self.subcount = self.subcount + 1
+						return section:AddBind(subOption)
+					end
+
+					function option:AddColor(subOption)
+						subOption = typeof(subOption) == "table" and subOption or {}
+						subOption.sub = true
+						subOption.subpos = self.subcount * 24
+						function subOption:getMain() option.main.Size = UDim2.new(1, 0, 0, 40) return option.main end
+						self.subcount = self.subcount + 1
+						return section:AddColor(subOption)
+					end
+
+					if library.hasInit and self.hasInit then
+						library.createButton(option, self.content)
+					else
+						option.Init = library.createButton
+					end
+
+					return option
+				end
+
+				function section:AddBind(option)
+					option = typeof(option) == "table" and option or {}
+					option.section = self
+					option.text = tostring(option.text)
+					option.key = (option.key and option.key.Name) or option.key or "none"
+					option.nomouse = typeof(option.nomouse) == "boolean" and option.nomouse or false
+					option.mode = typeof(option.mode) == "string" and (option.mode == "toggle" or option.mode == "hold" and option.mode) or "toggle"
+					option.callback = typeof(option.callback) == "function" and option.callback or function() end
+					option.type = "bind"
+					option.position = #self.options
+					option.flag = (library.flagprefix and library.flagprefix .. " " or "") .. (option.flag or option.text)
+					option.canInit = (option.canInit ~= nil and option.canInit) or true
+					option.tip = option.tip and tostring(option.tip)
+					table.insert(self.options, option)
+					library.options[option.flag] = option
+
+					if library.hasInit and self.hasInit then
+						library.createBind(option, self.content)
+					else
+						option.Init = library.createBind
+					end
+
+					return option
+				end
+
+				function section:AddSlider(option)
+					option = typeof(option) == "table" and option or {}
+					option.section = self
+					option.text = tostring(option.text)
+					option.min = typeof(option.min) == "number" and option.min or 0
+					option.max = typeof(option.max) == "number" and option.max or 0
+					option.value = option.min < 0 and 0 or math.clamp(typeof(option.value) == "number" and option.value or option.min, option.min, option.max)
+					option.callback = typeof(option.callback) == "function" and option.callback or function() end
+					option.float = typeof(option.value) == "number" and option.float or 1
+					option.suffix = option.suffix and tostring(option.suffix) or ""
+					option.textpos = option.textpos == 2
+					option.type = "slider"
+					option.position = #self.options
+					option.flag = (library.flagprefix and library.flagprefix .. " " or "") .. (option.flag or option.text)
+					option.subcount = 0
+					option.canInit = (option.canInit ~= nil and option.canInit) or true
+					option.tip = option.tip and tostring(option.tip)
+					library.flags[option.flag] = option.value
+					table.insert(self.options, option)
+					library.options[option.flag] = option
+
+					function option:AddColor(subOption)
+						subOption = typeof(subOption) == "table" and subOption or {}
+						subOption.sub = true
+						subOption.subpos = self.subcount * 24
+						function subOption:getMain() return option.main end
+						self.subcount = self.subcount + 1
+						return section:AddColor(subOption)
+					end
+
+					function option:AddBind(subOption)
+						subOption = typeof(subOption) == "table" and subOption or {}
+						subOption.sub = true
+						subOption.subpos = self.subcount * 24
+						function subOption:getMain() return option.main end
+						self.subcount = self.subcount + 1
+						return section:AddBind(subOption)
+					end
+
+					if library.hasInit and self.hasInit then
+						library.createSlider(option, self.content)
+					else
+						option.Init = library.createSlider
+					end
+
+					return option
+				end
+
+				function section:AddList(option)
+					option = typeof(option) == "table" and option or {}
+					option.section = self
+					option.text = tostring(option.text)
+					option.values = typeof(option.values) == "table" and option.values or {}
+					option.callback = typeof(option.callback) == "function" and option.callback or function() end
+					option.multiselect = typeof(option.multiselect) == "boolean" and option.multiselect or false
+					--option.groupbox = (not option.multiselect) and (typeof(option.groupbox) == "boolean" and option.groupbox or false)
+					option.value = option.multiselect and (typeof(option.value) == "table" and option.value or {}) or tostring(option.value or option.values[1] or "")
+					if option.multiselect then
+						for i,v in next, option.values do
+							option.value[v] = false
+						end
+					end
+					option.max = option.max or 4
+					option.open = false
+					option.type = "list"
+					option.position = #self.options
+					option.labels = {}
+					option.flag = (library.flagprefix and library.flagprefix .. " " or "") .. (option.flag or option.text)
+					option.subcount = 0
+					option.canInit = (option.canInit ~= nil and option.canInit) or true
+					option.tip = option.tip and tostring(option.tip)
+					library.flags[option.flag] = option.value
+					table.insert(self.options, option)
+					library.options[option.flag] = option
+
+					function option:AddValue(value, state)
+						if self.multiselect then
+							self.values[value] = state
+						else
+							table.insert(self.values, value)
+						end
+					end
+
+					function option:AddColor(subOption)
+						subOption = typeof(subOption) == "table" and subOption or {}
+						subOption.sub = true
+						subOption.subpos = self.subcount * 24
+						function subOption:getMain() return option.main end
+						self.subcount = self.subcount + 1
+						return section:AddColor(subOption)
+					end
+
+					function option:AddBind(subOption)
+						subOption = typeof(subOption) == "table" and subOption or {}
+						subOption.sub = true
+						subOption.subpos = self.subcount * 24
+						function subOption:getMain() return option.main end
+						self.subcount = self.subcount + 1
+						return section:AddBind(subOption)
+					end
+
+					if library.hasInit and self.hasInit then
+						library.createList(option, self.content)
+					else
+						option.Init = library.createList
+					end
+
+					return option
+				end
+
+				function section:AddBox(option)
+					option = typeof(option) == "table" and option or {}
+					option.section = self
+					option.text = tostring(option.text)
+					option.value = tostring(option.value or "")
+					option.callback = typeof(option.callback) == "function" and option.callback or function() end
+					option.type = "box"
+					option.position = #self.options
+					option.flag = (library.flagprefix and library.flagprefix .. " " or "") .. (option.flag or option.text)
+					option.canInit = (option.canInit ~= nil and option.canInit) or true
+					option.tip = option.tip and tostring(option.tip)
+					library.flags[option.flag] = option.value
+					table.insert(self.options, option)
+					library.options[option.flag] = option
+
+					if library.hasInit and self.hasInit then
+						library.createBox(option, self.content)
+					else
+						option.Init = library.createBox
+					end
+
+					return option
+				end
+
+				function section:AddColor(option)
+					option = typeof(option) == "table" and option or {}
+					option.section = self
+					option.text = tostring(option.text)
+					option.color = typeof(option.color) == "table" and Color3.new(option.color[1], option.color[2], option.color[3]) or option.color or Color3.new(1, 1, 1)
+					option.callback = typeof(option.callback) == "function" and option.callback or function() end
+					option.calltrans = typeof(option.calltrans) == "function" and option.calltrans or (option.calltrans == 1 and option.callback) or function() end
+					option.open = false
+					option.trans = tonumber(option.trans)
+					option.subcount = 1
+					option.type = "color"
+					option.position = #self.options
+					option.flag = (library.flagprefix and library.flagprefix .. " " or "") .. (option.flag or option.text)
+					option.canInit = (option.canInit ~= nil and option.canInit) or true
+					option.tip = option.tip and tostring(option.tip)
+					library.flags[option.flag] = option.color
+					table.insert(self.options, option)
+					library.options[option.flag] = option
+
+					function option:AddColor(subOption)
+						subOption = typeof(subOption) == "table" and subOption or {}
+						subOption.sub = true
+						subOption.subpos = self.subcount * 24
+						function subOption:getMain() return option.main end
+						self.subcount = self.subcount + 1
+						return section:AddColor(subOption)
+					end
+
+					if option.trans then
+						library.flags[option.flag .. " Transparency"] = option.trans
+					end
+
+					if library.hasInit and self.hasInit then
+						library.createColor(option, self.content)
+					else
+						option.Init = library.createColor
+					end
+
+					return option
+				end
+
+				function section:SetTitle(newTitle)
+					self.title = tostring(newTitle)
+					if self.titleText then
+						self.titleText.Text = tostring(newTitle)
+					end
+				end
+
+				function section:Init()
+					if self.hasInit then return end
+					self.hasInit = true
+
+					self.main = library:Create("Frame", {
+						BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+						BorderColor3 = Color3.new(),
+						Parent = column.main
+					})
+
+					self.content = library:Create("Frame", {
+						Size = UDim2.new(1, 0, 1, 0),
+						BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+						BorderColor3 = Color3.fromRGB(60, 60, 60),
+						BorderMode = Enum.BorderMode.Inset,
+						Parent = self.main
+					})
+
+					library:Create("ImageLabel", {
+						Size = UDim2.new(1, -2, 1, -2),
+						Position = UDim2.new(0, 1, 0, 1),
+						BackgroundTransparency = 1,
+						Image = "rbxassetid://2592362371",
+						ImageColor3 = Color3.new(),
+						ScaleType = Enum.ScaleType.Slice,
+						SliceCenter = Rect.new(2, 2, 62, 62),
+						Parent = self.main
+					})
+
+					table.insert(library.theme, library:Create("Frame", {
+						Size = UDim2.new(1, 0, 0, 1),
+						BackgroundColor3 = library.flags["Menu Accent Color"],
+						BorderSizePixel = 0,
+						BorderMode = Enum.BorderMode.Inset,
+						Parent = self.main
+					}))
+
+					local layout = library:Create("UIListLayout", {
+						HorizontalAlignment = Enum.HorizontalAlignment.Center,
+						SortOrder = Enum.SortOrder.LayoutOrder,
+						Padding = UDim.new(0, 2),
+						Parent = self.content
+					})
+
+					library:Create("UIPadding", {
+						PaddingTop = UDim.new(0, 12),
+						Parent = self.content
+					})
+
+					self.titleText = library:Create("TextLabel", {
+						AnchorPoint = Vector2.new(0, 0.5),
+						Position = UDim2.new(0, 12, 0, 0),
+						Size = UDim2.new(0, textService:GetTextSize(self.title, 15, Enum.Font.Code, Vector2.new(9e9, 9e9)).X + 10, 0, 3),
+						BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+						BorderSizePixel = 0,
+						Text = self.title,
+						TextSize = 15,
+						Font = Enum.Font.Code,
+						TextColor3 = Color3.new(1, 1, 1),
+						Parent = self.main
+					})
+
+					layout.Changed:connect(function()
+						self.main.Size = UDim2.new(1, 0, 0, layout.AbsoluteContentSize.Y + 16)
+					end)
+
+					for _, option in next, self.options do
+						if option.canInit then
+							option.Init(option, self.content)
+						end
+					end
+				end
+
+				if library.hasInit and self.hasInit then
+					section:Init()
+				end
+
+				return section
+			end
+
+			function column:Init()
+				if self.hasInit then return end
+				self.hasInit = true
+
+				self.main = library:Create("ScrollingFrame", {
+					ZIndex = 2,
+					Position = UDim2.new(0, 6 + (self.position * 239), 0, 2),
+					Size = UDim2.new(0, 233, 1, -4),
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					ScrollBarImageColor3 = Color3.fromRGB(),
+					ScrollBarThickness = 4,	
+					VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar,
+					ScrollingDirection = Enum.ScrollingDirection.Y,
+					Visible = false,
+					Parent = library.columnHolder
+				})
+
+				local layout = library:Create("UIListLayout", {
+					HorizontalAlignment = Enum.HorizontalAlignment.Center,
+					SortOrder = Enum.SortOrder.LayoutOrder,
+					Padding = UDim.new(0, 12),
+					Parent = self.main
+				})
+
+				library:Create("UIPadding", {
+					PaddingTop = UDim.new(0, 8),
+					PaddingLeft = UDim.new(0, 2),
+					PaddingRight = UDim.new(0, 2),
+					Parent = self.main
+				})
+
+				layout.Changed:connect(function()
+					self.main.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 14)
+				end)
+
+				for _, section in next, self.sections do
+					if section.canInit and #section.options > 0 then
+						section:Init()
+					end
+				end
+			end
+
+			if library.hasInit and self.hasInit then
+				column:Init()
+			end
+
+			return column
+		end
+
+		function tab:Init()
+			if self.hasInit then return end
+			self.hasInit = true
+			local size = textService:GetTextSize(self.title, 18, Enum.Font.Code, Vector2.new(9e9, 9e9)).X + 10
+
+			self.button = library:Create("TextLabel", {
+				Position = UDim2.new(0, library.tabSize, 0, 22),
+				Size = UDim2.new(0, size, 0, 30),
+				BackgroundTransparency = 1,
+				Text = self.title,
+				TextColor3 = Color3.new(1, 1, 1),
+				TextSize = 15,
+				Font = Enum.Font.Code,
+				TextWrapped = true,
+				ClipsDescendants = true,
+				Parent = library.main
+			})
+			library.tabSize = library.tabSize + size
+
+			self.button.InputBegan:connect(function(input)
+				if input.UserInputType.Name == "MouseButton1" then
+					library:selectTab(self)
+				end
+			end)
+
+			for _, column in next, self.columns do
+				if column.canInit then
+					column:Init()
+				end
+			end
+		end
+
+		if self.hasInit then
+			tab:Init()
+		end
+
+		return tab
+	end
+
+	function library:AddWarning(warning)
+		warning = typeof(warning) == "table" and warning or {}
+		warning.text = tostring(warning.text) 
+		warning.type = warning.type == "confirm" and "confirm" or ""
+
+		local answer
+		function warning:Show()
+			library.warning = warning
+			if warning.main and warning.type == "" then return end
+			if library.popup then library.popup:Close() end
+			if not warning.main then
+				warning.main = library:Create("TextButton", {
+					ZIndex = 2,
+					Size = UDim2.new(1, 0, 1, 0),
+					BackgroundTransparency = 0.6,
+					BackgroundColor3 = Color3.new(),
+					BorderSizePixel = 0,
+					Text = "",
+					AutoButtonColor = false,
+					Parent = library.main
+				})
+
+				warning.message = library:Create("TextLabel", {
+					ZIndex = 2,
+					Position = UDim2.new(0, 20, 0.5, -60),
+					Size = UDim2.new(1, -40, 0, 40),
+					BackgroundTransparency = 1,
+					TextSize = 16,
+					Font = Enum.Font.Code,
+					TextColor3 = Color3.new(1, 1, 1),
+					TextWrapped = true,
+					RichText = true,
+					Parent = warning.main
+				})
+
+				if warning.type == "confirm" then
+					local button = library:Create("TextLabel", {
+						ZIndex = 2,
+						Position = UDim2.new(0.5, -105, 0.5, -10),
+						Size = UDim2.new(0, 100, 0, 20),
+						BackgroundColor3 = Color3.fromRGB(40, 40, 40),
+						BorderColor3 = Color3.new(),
+						Text = "Yes",
+						TextSize = 16,
+						Font = Enum.Font.Code,
+						TextColor3 = Color3.new(1, 1, 1),
+						Parent = warning.main
+					})
+
+					library:Create("ImageLabel", {
+						ZIndex = 2,
+						Size = UDim2.new(1, 0, 1, 0),
+						BackgroundTransparency = 1,
+						Image = "rbxassetid://2454009026",
+						ImageColor3 = Color3.new(),
+						ImageTransparency = 0.8,
+						Parent = button
+					})
+
+					library:Create("ImageLabel", {
+						ZIndex = 2,
+						Size = UDim2.new(1, 0, 1, 0),
+						BackgroundTransparency = 1,
+						Image = "rbxassetid://2592362371",
+						ImageColor3 = Color3.fromRGB(60, 60, 60),
+						ScaleType = Enum.ScaleType.Slice,
+						SliceCenter = Rect.new(2, 2, 62, 62),
+						Parent = button
+					})
+
+					local button1 = library:Create("TextLabel", {
+						ZIndex = 2,
+						Position = UDim2.new(0.5, 5, 0.5, -10),
+						Size = UDim2.new(0, 100, 0, 20),
+						BackgroundColor3 = Color3.fromRGB(40, 40, 40),
+						BorderColor3 = Color3.new(),
+						Text = "No",
+						TextSize = 16,
+						Font = Enum.Font.Code,
+						TextColor3 = Color3.new(1, 1, 1),
+						Parent = warning.main
+					})
+
+					library:Create("ImageLabel", {
+						ZIndex = 2,
+						Size = UDim2.new(1, 0, 1, 0),
+						BackgroundTransparency = 1,
+						Image = "rbxassetid://2454009026",
+						ImageColor3 = Color3.new(),
+						ImageTransparency = 0.8,
+						Parent = button1
+					})
+
+					library:Create("ImageLabel", {
+						ZIndex = 2,
+						Size = UDim2.new(1, 0, 1, 0),
+						BackgroundTransparency = 1,
+						Image = "rbxassetid://2592362371",
+						ImageColor3 = Color3.fromRGB(60, 60, 60),
+						ScaleType = Enum.ScaleType.Slice,
+						SliceCenter = Rect.new(2, 2, 62, 62),
+						Parent = button1
+					})
+
+					button.InputBegan:connect(function(input)
+						if input.UserInputType.Name == "MouseButton1" then
+							answer = true
+						end
+					end)
+
+					button1.InputBegan:connect(function(input)
+						if input.UserInputType.Name == "MouseButton1" then
+							answer = false
+						end
+					end)
+				else
+					local button = library:Create("TextLabel", {
+						ZIndex = 2,
+						Position = UDim2.new(0.5, -50, 0.5, -10),
+						Size = UDim2.new(0, 100, 0, 20),
+						BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+						BorderColor3 = Color3.new(),
+						Text = "OK",
+						TextSize = 16,
+						Font = Enum.Font.Code,
+						TextColor3 = Color3.new(1, 1, 1),
+						Parent = warning.main
+					})
+
+					library:Create("ImageLabel", {
+						ZIndex = 2,
+						Size = UDim2.new(1, 0, 1, 0),
+						BackgroundTransparency = 1,
+						Image = "rbxassetid://2454009026",
+						ImageColor3 = Color3.new(),
+						ImageTransparency = 0.8,
+						Parent = button
+					})
+
+					library:Create("ImageLabel", {
+						ZIndex = 2,
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						Position = UDim2.new(0.5, 0, 0.5, 0),
+						Size = UDim2.new(1, -2, 1, -2),
+						BackgroundTransparency = 1,
+						Image = "rbxassetid://3570695787",
+						ImageColor3 = Color3.fromRGB(50, 50, 50),
+						Parent = button
+					})
+
+					button.InputBegan:connect(function(input)
+						if input.UserInputType.Name == "MouseButton1" then
+							answer = true
+						end
+					end)
+				end
+			end
+			warning.main.Visible = true
+			warning.message.Text = warning.text
+
+			repeat wait()
+			until answer ~= nil
+			spawn(warning.Close)
+			library.warning = nil
+			return answer
+		end
+
+		function warning:Close()
+			answer = nil
+			if not warning.main then return end
+			warning.main.Visible = false
+		end
+
+		return warning
+	end
+
+	function library:Close()
+		self.open = not self.open
+		if self.open then
+			inputService.MouseIconEnabled = false
+		else
+			inputService.MouseIconEnabled = self.mousestate
+		end
+		if self.main then
+			if self.popup then
+				self.popup:Close()
+			end
+			self.main.Visible = self.open
+			self.cursor.Visible  = self.open
+			self.cursor1.Visible  = self.open
+		end
+	end
+
+	function library:Init()
+		if self.hasInit then return end
+		self.hasInit = true
+
+		self.base = library:Create("ScreenGui", {IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Global})
+		if runService:IsStudio() then
+			self.base.Parent = script.Parent.Parent
+		elseif syn then
+			pcall(function() syn.protect_gui(self.base) end)
+			self.base.Parent = game:GetService"CoreGui"
+		end
+
+		self.main = self:Create("ImageButton", {
+			AutoButtonColor = false,
+			Position = UDim2.new(0, 100, 0, 46),
+			Size = UDim2.new(0, 500, 0, 600),
+			BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+			BorderColor3 = Color3.new(),
+			ScaleType = Enum.ScaleType.Tile,
+			Modal = true,
+			Visible = false,
+			Parent = self.base
+		})
+
+		self.top = self:Create("Frame", {
+			Size = UDim2.new(1, 0, 0, 50),
+			BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+			BorderColor3 = Color3.new(),
+			Parent = self.main
+		})
+
+		self:Create("TextLabel", {
+			Position = UDim2.new(0, 6, 0, -1),
+			Size = UDim2.new(0, 0, 0, 20),
+			BackgroundTransparency = 1,
+			Text = tostring(self.title),
+			Font = Enum.Font.Code,
+			TextSize = 18,
+			TextColor3 = Color3.new(1, 1, 1),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Parent = self.main
+		})
+
+		table.insert(library.theme, self:Create("Frame", {
+			Size = UDim2.new(1, 0, 0, 1),
+			Position = UDim2.new(0, 0, 0, 24),
+			BackgroundColor3 = library.flags["Menu Accent Color"],
+			BorderSizePixel = 0,
+			Parent = self.main
+		}))
+
+		library:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2454009026",
+			ImageColor3 = Color3.new(),
+			ImageTransparency = 0.4,
+			Parent = top
+		})
+
+		self.tabHighlight = self:Create("Frame", {
+			BackgroundColor3 = library.flags["Menu Accent Color"],
+			BorderSizePixel = 0,
+			Parent = self.main
+		})
+		table.insert(library.theme, self.tabHighlight)
+
+		self.columnHolder = self:Create("Frame", {
+			Position = UDim2.new(0, 5, 0, 55),
+			Size = UDim2.new(1, -10, 1, -60),
+			BackgroundTransparency = 1,
+			Parent = self.main
+		})
+
+		self.cursor = self:Create("Triangle", {
+			Color = Color3.fromRGB(180, 180, 180),
+			Transparency = 0.6,
+		})
+		self.cursor1 = self:Create("Triangle", {
+			Color = Color3.fromRGB(240, 240, 240),
+			Transparency = 0.6,
+		})
+
+		self.tooltip = self:Create("TextLabel", {
+			ZIndex = 2,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			TextSize = 15,
+			Font = Enum.Font.Code,
+			TextColor3 = Color3.new(1, 1, 1),
+			Visible = true,
+			Parent = self.base
+		})
+
+		self:Create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0),
+			Position = UDim2.new(0.5, 0, 0, 0),
+			Size = UDim2.new(1, 10, 1, 0),
+			Style = Enum.FrameStyle.RobloxRound,
+			Parent = self.tooltip
+		})
+
+		self:Create("ImageLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.fromRGB(60, 60, 60),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = self.main
+		})
+
+		self:Create("ImageLabel", {
+			Size = UDim2.new(1, -2, 1, -2),
+			Position = UDim2.new(0, 1, 0, 1),
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://2592362371",
+			ImageColor3 = Color3.new(),
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(2, 2, 62, 62),
+			Parent = self.main
+		})
+
+		self.top.InputBegan:connect(function(input)
+			if input.UserInputType.Name == "MouseButton1" then
+				dragObject = self.main
+				dragging = true
+				dragStart = input.Position
+				startPos = dragObject.Position
+				if library.popup then library.popup:Close() end
+			end
+		end)
+		self.top.InputChanged:connect(function(input)
+			if dragging and input.UserInputType.Name == "MouseMovement" then
+				dragInput = input
+			end
+		end)
+		self.top.InputEnded:connect(function(input)
+			if input.UserInputType.Name == "MouseButton1" then
+				dragging = false
+			end
+		end)
+
+		function self:selectTab(tab)
+			if self.currentTab == tab then return end
+			if library.popup then library.popup:Close() end
+			if self.currentTab then
+				self.currentTab.button.TextColor3 = Color3.fromRGB(255, 255, 255)
+				for _, column in next, self.currentTab.columns do
+					column.main.Visible = false
+				end
+			end
+			self.main.Size = UDim2.new(0, 16 + ((#tab.columns < 2 and 2 or #tab.columns) * 239), 0, 600)
+			self.currentTab = tab
+			tab.button.TextColor3 = library.flags["Menu Accent Color"]
+			self.tabHighlight:TweenPosition(UDim2.new(0, tab.button.Position.X.Offset, 0, 50), "Out", "Quad", 0.2, true)
+			self.tabHighlight:TweenSize(UDim2.new(0, tab.button.AbsoluteSize.X, 0, -1), "Out", "Quad", 0.1, true)
+			for _, column in next, tab.columns do
+				column.main.Visible = true
+			end
+		end
+
+		spawn(function()
+			while library do
+				wait(1)
+				local Configs = self:GetConfigs()
+				for _, config in next, Configs do
+					if not table.find(self.options["Config List"].values, config) then
+						self.options["Config List"]:AddValue(config)
+					end
+				end
+				for _, config in next, self.options["Config List"].values do
+					if not table.find(Configs, config) then
+						self.options["Config List"]:RemoveValue(config)
+					end
+				end
+			end
+		end)
+
+		for _, tab in next, self.tabs do
+			if tab.canInit then
+				tab:Init()
+				self:selectTab(tab)
+			end
+		end
+
+		self:AddConnection(inputService.InputEnded, function(input)
+			if input.UserInputType.Name == "MouseButton1" and self.slider then
+				self.slider.slider.BorderColor3 = Color3.new()
+				self.slider = nil
+			end
+		end)
+
+		self:AddConnection(inputService.InputChanged, function(input)
+			if not self.open then return end
+			
+			if input.UserInputType.Name == "MouseMovement" then
+				if self.cursor then
+					local mouse = inputService:GetMouseLocation()
+					local MousePos = Vector2.new(mouse.X, mouse.Y)
+					self.cursor.PointA = MousePos
+					self.cursor.PointB = MousePos + Vector2.new(12, 12)
+					self.cursor.PointC = MousePos + Vector2.new(12, 12)
+					self.cursor1.PointA = MousePos
+					self.cursor1.PointB = MousePos + Vector2.new(11, 11)
+					self.cursor1.PointC = MousePos + Vector2.new(11, 11)
+				end
+				if self.slider then
+					self.slider:SetValue(self.slider.min + ((input.Position.X - self.slider.slider.AbsolutePosition.X) / self.slider.slider.AbsoluteSize.X) * (self.slider.max - self.slider.min))
+				end
+			end
+			if input == dragInput and dragging and library.draggable then
+				local delta = input.Position - dragStart
+				local yPos = (startPos.Y.Offset + delta.Y) < -36 and -36 or startPos.Y.Offset + delta.Y
+				dragObject:TweenPosition(UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, yPos), "Out", "Quint", 0.1, true)
+			end
+		end)
+
+		local Old_index
+		Old_index = hookmetamethod(game, "__index", function(t, i)
+			if checkcaller() then return Old_index(t, i) end
+
+			if library and i == "MouseIconEnabled" then
+				return library.mousestate
+			end
+
+			return Old_index(t, i)
+		end)
+
+		local Old_new
+		Old_new = hookmetamethod(game, "__newindex", function(t, i, v)
+			if checkcaller() then return Old_new(t, i, v) end
+
+			if library and i == "MouseIconEnabled" then
+				library.mousestate = v
+				if library.open then return end
+			end
+
+			return Old_new(t, i, v)
+		end)
+
+		if not getgenv().silent then
+			delay(1, function() self:Close() end)
+		end
+	end
+
+	library.SettingsTab = library:AddTab("Settings", 100)
+	library.SettingsColumn = library.SettingsTab:AddColumn()
+	library.SettingsColumn1 = library.SettingsTab:AddColumn()
+
+	library.SettingsMain = library.SettingsColumn:AddSection"Main"
+	library.SettingsMain:AddButton({text = "Unload Cheat", nomouse = true, callback = function()
+		library:Unload()
+		getgenv().uwuware = nil
+	end})
+	library.SettingsMain:AddBind({text = "Panic Key", callback = library.options["Unload Cheat"].callback})
+
+	library.SettingsMenu = library.SettingsColumn:AddSection"Menu"
+	library.SettingsMenu:AddBind({text = "Open / Close", flag = "UI Toggle", nomouse = true, key = "Insert", callback = function() library:Close() end})
+	library.SettingsMenu:AddColor({text = "Accent Color", flag = "Menu Accent Color", color = Color3.fromRGB(255, 65, 65), callback = function(Color)
+		if library.currentTab then
+			library.currentTab.button.TextColor3 = Color
+		end
+		for _, obj in next, library.theme do
+			obj[(obj.ClassName == "TextLabel" and "TextColor3") or (obj.ClassName == "ImageLabel" and "ImageColor3") or "BackgroundColor3"] = Color
+		end
+	end})
+	local Backgrounds = {
+		["Floral"] = 5553946656,
+		["Flowers"] = 6071575925,
+		["Circles"] = 6071579801,
+		["Hearts"] = 6073763717,
+		["Polka dots"] = 6214418014,
+		["Mountains"] = 6214412460,
+		["Zigzag"] = 6214416834,
+		["Zigzag 2"] = 6214375242,
+		["Tartan"] = 6214404863,
+		["Roses"] = 6214374619,
+		["Hexagons"] = 6214320051,
+		["Leopard print"] = 6214318622
+	}
+	library.SettingsMenu:AddList({text = "Background", flag = "UI Background", max = 6, values = {"Floral", "Flowers", "Circles", "Hearts", "Polka dots", "Mountains", "Zigzag", "Zigzag 2", "Tartan", "Roses", "Hexagons", "Leopard print"}, callback = function(Value)
+		if Backgrounds[Value] then
+			library.main.Image = "rbxassetid://" .. Backgrounds[Value]
+		end
+	end}):AddColor({flag = "Menu Background Color", color = Color3.new(), callback = function(Color)
+		library.main.ImageColor3 = Color
+	end, trans = 1, calltrans = function(Value)
+		library.main.ImageTransparency = 1 - Value
+	end})
+	library.SettingsMenu:AddSlider({text = "Tile Size", value = 90, min = 50, max = 500, callback = function(Value)
+		library.main.TileSize = UDim2.new(0, Value, 0, Value)
+	end})
+
+	library.ConfigSection = library.SettingsColumn1:AddSection"Configs"
+	library.ConfigSection:AddBox({text = "Config Name", skipflag = true})
+	library.ConfigSection:AddButton({text = "Create", callback = function()
+		library:GetConfigs()
+		writefile(library.foldername .. "/" .. library.flags["Config Name"] .. library.fileext, "{}")
+		library.options["Config List"]:AddValue(library.flags["Config Name"])
+	end})
+	library.ConfigWarning = library:AddWarning({type = "confirm"})
+	library.ConfigSection:AddList({text = "Configs", skipflag = true, value = "", flag = "Config List", values = library:GetConfigs()})
+	library.ConfigSection:AddButton({text = "Save", callback = function()
+		local r, g, b = library.round(library.flags["Menu Accent Color"])
+		library.ConfigWarning.text = "Are you sure you want to save the current settings to config <font color='rgb(" .. r .. "," .. g .. "," .. b .. ")'>" .. library.flags["Config List"] .. "</font>?"
+		if library.ConfigWarning:Show() then
+			library:SaveConfig(library.flags["Config List"])
+		end
+	end})
+	library.ConfigSection:AddButton({text = "Load", callback = function()
+		local r, g, b = library.round(library.flags["Menu Accent Color"])
+		library.ConfigWarning.text = "Are you sure you want to load config <font color='rgb(" .. r .. "," .. g .. "," .. b .. ")'>" .. library.flags["Config List"] .. "</font>?"
+		if library.ConfigWarning:Show() then
+			library:LoadConfig(library.flags["Config List"])
+		end
+	end})
+	library.ConfigSection:AddButton({text = "Delete", callback = function()
+		local r, g, b = library.round(library.flags["Menu Accent Color"])
+		library.ConfigWarning.text = "Are you sure you want to delete config <font color='rgb(" .. r .. "," .. g .. "," .. b .. ")'>" .. library.flags["Config List"] .. "</font>?"
+		if ConfigWarning:Show() then
+			local Config = library.flags["Config List"]
+			if table.find(library:GetConfigs(), Config) and isfile(library.foldername .. "/" .. Config .. library.fileext) then
+				library.options["Config List"]:RemoveValue(Config)
+				delfile(library.foldername .. "/" .. Config .. library.fileext)
+			end
+		end
+	end})
+	--LIBRARY END
+	
+	--custom notification thing, library required for this to work
+	local LastNotification = 0
+	function library:SendNotification(duration, message)
+		LastNotification = LastNotification + tick()
+		if LastNotification < 0.2 or not library.base then return end
+		LastNotification = 0
+		if duration then
+			duration = tonumber(duration) or 2
+			duration = duration < 2 and 2 or duration
+		else
+			duration = message
+		end
+		message = message and tostring(message) or "Empty"
+
+		--create the thing
+		local notification = library:Create("Frame", {
+			AnchorPoint = Vector2.new(1, 1),
+			Size = UDim2.new(0, 0, 0, 80),
+			Position = UDim2.new(1, -5, 1, -5),
+			BackgroundTransparency = 1,
+			BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+			BorderColor3 = Color3.fromRGB(20, 20, 20),
+			Parent = library.base
+		})
+		tweenService:Create(notification, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, 240, 0, 80), BackgroundTransparency = 0}):Play()
+
+		tweenService:Create(library:Create("TextLabel", {
+			Position = UDim2.new(0, 5, 0, 25),
+			Size = UDim2.new(1, -10, 0, 40),
+			BackgroundTransparency = 1,
+			Text = tostring(message),
+			Font = Enum.Font.SourceSans,
+			TextColor3 = Color3.fromRGB(255, 255, 255),
+			TextSize = 18,
+			TextTransparency = 1,
+			TextWrapped = true,
+			Parent = notification
+		}), TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, 0.3), {TextTransparency = 0}):Play()
+
+		--bump existing notifications
+		for _,notification in next, library.notifications do
+			notification:TweenPosition(UDim2.new(1, -5, 1, notification.Position.Y.Offset - 85), "Out", "Quad", 0.2)
+		end
+		library.notifications[notification] = notification
+
+		wait(0.4)
+
+		--create other things
+		library:Create("Frame", {
+			Position = UDim2.new(0, 0, 0, 20),
+			Size = UDim2.new(0, 0, 0, 1),
+			BackgroundColor3 = Color3.fromRGB(255, 65, 65),
+			BorderSizePixel = 0,
+			Parent = notification
+		}):TweenSize(UDim2.new(1, 0, 0, 1), "Out", "Linear", duration)
+
+		tweenService:Create(library:Create("TextLabel", {
+			Position = UDim2.new(0, 4, 0, 0),
+			Size = UDim2.new(0, 70, 0, 16),
+			BackgroundTransparency = 1,
+			Text = "uwuware",
+			Font = Enum.Font.Gotham,
+			TextColor3 = Color3.fromRGB(255, 65, 65),
+			TextSize = 16,
+			TextTransparency = 1,
+			Parent = notification
+		}), TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
+
+		--remove
+		delay(duration, function()
+			if not library then return end
+			library.notifications[notification] = nil
+			--bump existing notifications down
+			for _,otherNotif in next, library.notifications do
+				if otherNotif.Position.Y.Offset < notification.Position.Y.Offset then
+					otherNotif:TweenPosition(UDim2.new(1, -5, 1, otherNotif.Position.Y.Offset + 85), "Out", "Quad", 0.2)
+				end
+			end
+			notification:Destroy()
+		end)
+	end
+
+    return library
